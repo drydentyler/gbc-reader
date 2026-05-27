@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gbc-reader-prep"
+description = "Desktop preprocessor that converts PDFs into .book files for the Game Boy Color E-Reader."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }                                   # TODO: confirm license choice
+authors = [
+    { name = "TODO: set author name", email = "TODO@example.com" },
+]
+keywords = ["gbc", "ereader", "pdf", "ebook", "preprocessor"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = []
+dynamic = ["version"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+gbc-reader-prep = "gbc_reader_prep.cli:main"
+
+[project.urls]
+# TODO: set when the repo is created
+Repository = "https://example.com/TODO"
+
+[tool.hatch.version]
+path = "src/gbc_reader_prep/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gbc_reader_prep"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
