@@ -18,7 +18,8 @@ gbc-reader-prep/
 ├── docs/
 │   ├── a2-findings.md                              [NEW]
 │   └── tickets/
-│       └── A-1.md                                  [UNCHANGED]
+│       ├── A-1.md                                  [UNCHANGED]
+│       └── A-2.md                                  [NEW]
 ├── src/
 │   └── gbc_reader_prep/
 │       ├── __init__.py                             [UNCHANGED]
@@ -40,16 +41,13 @@ gbc-reader-prep/
 - **`PROJECT_TREE.md`** — Current directory layout with per-ticket annotations. Read at start of every ticket; updated at close.
 - **`docs/a2-findings.md`** — Findings template for the A-2 acceptance criterion: per-PDF observations from running text extraction on 3 sample PDFs. To be filled in during A-2 close-out.
 - **`docs/tickets/A-1.md`** — Completion synopsis for A-1 (Python project skeleton). Narrative record of decisions, conventions established, and hand-off notes.
+- **`docs/tickets/A-2.md`** *(new in A-2)* — Completion synopsis for A-2 (PDF text extraction PoC). Includes architecture overview, decisions made, and hand-off notes for A-3.
 - **`src/gbc_reader_prep/__init__.py`** — Package marker. Holds `__version__ = "0.1.0"`.
 - **`src/gbc_reader_prep/cli.py`** — Top-level CLI. Builds the argparse parser, registers subcommands, dispatches. A-2 adds subparsers wiring and the `preprocess` registration.
 - **`src/gbc_reader_prep/extract.py`** *(new in A-2)* — Low-level PDF text extraction with PyMuPDF. Single public function `extract_text`.
 - **`src/gbc_reader_prep/preprocess.py`** *(new in A-2)* — Handler for the `preprocess` subcommand. Exposes `add_subparser` and `run`.
 - **`tests/__init__.py`** — Empty package marker.
 - **`tests/test_cli.py`** — Smoke tests for the CLI. A-1's 4 tests plus a new A-2 test for `preprocess` subcommand wiring.
-
-## Files expected to be created when A-2 closes (not yet in tree)
-
-- **`docs/tickets/A-2.md`** — Completion synopsis for A-2, following the A-1.md pattern (decisions made, hand-off notes, what's deliberately not done yet). When written, add to the tree as `[NEW]` in the same edit that closes the ticket.
 
 ## Excluded from the tree
 
