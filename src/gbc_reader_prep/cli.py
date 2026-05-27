@@ -13,6 +13,7 @@ import argparse
 import logging
 import sys
 from typing import Sequence
+from . import preprocess
 
 from gbc_reader_prep import __version__
 
@@ -51,6 +52,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="enable debug logging",
     )
+
+    subparsers = parser.add_subparsers(
+        dest="command",
+        metavar="<command>",
+    )
+    preprocess.add_subparser(subparsers)
+
     return parser
 
 
@@ -60,12 +68,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     configure_logging(verbose=args.verbose)
 
+    func = getattr(args, "func", None)
+    if func is not None:
+        return func(args)
+
     log.debug("Parsed args: %s", args)
     log.info(
         "gbc-reader-prep %s ready. No subcommands implemented yet "
         "(see tickets A-2 through A-9 in the project plan).",
         __version__,
     )
+
+    build_parser().print_help()
     return 0
 
 
