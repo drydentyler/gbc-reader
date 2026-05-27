@@ -41,3 +41,11 @@ def test_console_script_reports_version() -> None:
     combined = result.stdout + result.stderr
     assert __version__ in combined
     assert "gbc-reader-prep" in combined
+
+def test_preprocess_help_runs(capsys):
+    """`gbc-reader-prep preprocess --help` exits 0 and mentions 'preprocess'."""
+    with pytest.raises(SystemExit) as exc_info:
+        main(["preprocess", "--help"])
+    assert exc_info.value.code == 0
+    out = capsys.readouterr().out
+    assert "preprocess" in out.lower()
