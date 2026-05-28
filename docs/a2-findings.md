@@ -1,86 +1,100 @@
 # GBCR-A2 Findings: PDF Text Extraction
 
-> **Status:** To be completed after running `extract` against three test PDFs.
+> **Status:** Complete
 > **Ticket:** GBCR-A2
-> **Last updated:** _yyyy-mm-dd_
-
-For each PDF, record observations that will inform later tickets
-(A-3 outline-based chapter detection, A-4 heuristic chapter detection,
-A-5 front/back-matter trimming, A-7 pagination).
+> **Last updated:** 2026-05-27
 
 ---
 
-## Sample 1 — Novel
+## Scope decision (reduced from project plan)
 
-- **File:**
-- **Source / license:**
-- **Page count (reported by extractor):**
-- **Has embedded text (vs scanned image)?**
-- **Extraction completed without exceptions?**
-- **Empty-page count (from warning):**
+The project plan (§4 A-2) calls for testing against three PDF types: novel,
+technical book, and illustrated book. **Scope reduced to two prose books
+(novel + general non-fiction)** by user decision on 2026-05-27.
 
-### Observations
+**Rationale:** This is a personal-use project. The user has no intent to
+read technical or illustrated books on the Game Boy Color form factor.
+The original three-category test was meant to stress different extraction
+behaviors (flowing prose vs. complex layout vs. heavy graphics); for the
+actual intended use, only the prose path matters.
 
-- Were chapter titles preserved in the text?
-- Did running headers and footers leak into the body text?
-- Did page numbers appear inline with body text?
-- Were paragraph breaks recognizable (e.g. preserved as blank lines)?
-- Any garbled characters or encoding issues?
-- Order of text on multi-column or sidebar pages (if any)?
+**Downstream implications for later tickets:**
 
-### Notes
-
-_(free-form)_
-
----
-
-## Sample 2 — Technical book
-
-- **File:**
-- **Source / license:**
-- **Page count:**
-- **Has embedded text?**
-- **Extraction completed?**
-- **Empty-page count:**
-
-### Observations
-
-- Headings (chapter, section, subsection): preserved? distinguishable from body?
-- Code blocks: preserved? formatting lost?
-- Tables: how did they extract?
-- Figure captions: present? in correct place?
-- Footnotes: inline or separated?
-- Index / TOC pages: any pattern that could be used for trimming?
-
-### Notes
+- **A-7 (pagination):** Can assume single-column flowing text. Multi-column
+  layout handling, code-block preservation, and table extraction are out
+  of scope for v1.
+- **A-6 (cover image):** Still needs to handle illustrated covers (most
+  novel PDFs have one) even though interior pages are prose.
+- **No new ticket is required** to support technical/illustrated content.
+  If desired later, it becomes a v2 candidate.
 
 ---
 
-## Sample 3 — Illustrated book
+## Sample 1 — Novel: Star Wars: Darth Plagueis (James Luceno)
 
-- **File:**
-- **Source / license:**
-- **Page count:**
-- **Has embedded text?**
-- **Extraction completed?**
-- **Empty-page count:**
-
-### Observations
-
-- How much usable text was actually extracted vs lost to image content?
-- Captions and labels: present?
-- Multi-column or non-linear page layouts: how did reading order come out?
+- **File:** `_OceanofPDF.com_SW0201_Darth_Plagueis_-_James_Lucerno.pdf`
+- **Source:** User's personal library
+- **Page count (reported by extractor):** 450
+- **Has embedded text (vs. scanned image):** Yes — only 20/450 blank
+- **Extraction completed:** Yes, no exceptions
+- **Empty-page count (from warning):** 20
+- **Visual inspection:** Output is recognizable and readable. **Acceptance met.**
 
 ### Notes
+
+The empty-page warning fired but is misleading in this context. With 430
+of 450 pages extracting cleanly, the 20 blanks are almost certainly
+chapter dividers, part-title verso pages, or full-page art — not
+scanned-without-OCR. See "Suggested follow-ups" below.
+
+---
+
+## Sample 2 — General non-fiction: If Anyone Builds It, Everyone Dies (Eliezer Yudkowsky)
+
+- **File:** `_OceanofPDF.com_If_Anyone_Builds_It_Everyone_Die_-_Eliezer_Yudkowsky.pdf`
+- **Source:** User's personal library
+- **Page count (reported by extractor):** 228
+- **Has embedded text:** Yes — only 3/228 blank
+- **Extraction completed:** Yes, no exceptions
+- **Empty-page count:** 3
+- **Visual inspection:** Output is recognizable and readable. **Acceptance met.**
+
+### Notes
+
+Prose non-fiction; not a stress test of technical-book features (code blocks,
+multi-column layout, dense tables) — see scope decision above. The 3 blank
+pages are likely chapter-end versos or front-matter pages.
 
 ---
 
 ## Implications for later tickets
 
-- **A-3 (outline-based chapter detection):**
-- **A-4 (heuristic chapter detection):**
-- **A-5 (front/back-matter trimming):**
-- **A-7 (pagination):**
-- **Out-of-scope items uncovered (candidates for v2):**
-  - e.g. OCR for scanned PDFs?
-  - e.g. `"blocks"`-mode extraction for multi-column layouts?
+- **A-3 (outline-based chapter detection):** Both test PDFs are commercial
+  trade paperbacks and most likely carry full bookmark trees. A-3 should
+  work cleanly against them. Re-run A-3 against the same two PDFs as part
+  of A-3 acceptance.
+- **A-4 (heuristic chapter detection):** Not exercised here, but still
+  needed as a fallback for PDFs without bookmarks.
+- **A-5 (front/back-matter trimming):** Should handle any
+  distribution-inserted pages (covers, watermarks, source notices) that
+  appear before or after the actual book content. The manual override
+  mechanism (`--start-page`, `--end-page`, per project plan §3.1) is the
+  right escape hatch when heuristics misfire.
+- **A-7 (pagination):** Must handle interior blank pages gracefully — do
+  not render them as empty pages in the reader's page sequence. Either
+  skip them outright or treat them as chapter separators.
+
+## Suggested follow-ups (low priority, not blocking)
+
+- **Soften the empty-page warning copy in `extract.py`.** Current text
+  attributes blank pages to "scanned PDF without OCR," which was
+  misleading in both samples (neither was scanned). A more accurate
+  phrasing would name the common causes: chapter dividers, part-title
+  pages, full-page images, *or* scanned-without-OCR. Defer to a future
+  cleanup pass; not worth bumping a ticket.
+
+- **Use distinct output filenames per run.** During testing both
+  extractions wrote to `sample.txt`, so the first output was overwritten
+  by the second. Future runs should use names like `darth.txt` /
+  `ifanyone.txt` so multiple outputs can be inspected side-by-side. Not
+  a code issue — just a usage note.
