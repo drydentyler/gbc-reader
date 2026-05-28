@@ -1,7 +1,7 @@
 # Project Directory Tree — gbc-reader-prep
 
-> **Last updated:** GBCR-A2 (draft state — A-2 changes not yet applied to repo)
-> **Annotations reflect:** changes in A-2 only. Files unchanged in A-2 are tagged `[UNCHANGED]`. At the start of A-3, all `[NEW]` and `[MODIFIED]` tags below should be reset to `[UNCHANGED]` before A-3's changes are applied.
+> **Last updated:** GBCR-A3
+> **Annotations reflect:** changes in A-3 only. A-2's `[NEW]` and `[MODIFIED]` tags were reset to `[UNCHANGED]` at the start of A-3 before applying A-3's changes. At the start of A-4, repeat that reset for the tags below before applying A-4's changes.
 
 ## Tree
 
@@ -11,43 +11,49 @@
 gbc-reader-prep/
 ├── .gitignore                                      [UNCHANGED]
 ├── README.md                                       [UNCHANGED]
-├── pyproject.toml                                  [MODIFIED]
+├── pyproject.toml                                  [UNCHANGED]
 ├── GBC_Reader_Project_Plan.md                      [UNCHANGED]
-├── PROJECT_API.md                                  [NEW]
-├── PROJECT_TREE.md                                 [NEW]
+├── PROJECT_API.md                                  [MODIFIED]
+├── PROJECT_TREE.md                                 [MODIFIED]
 ├── docs/
-│   ├── a2-findings.md                              [NEW]
+│   ├── a2-findings.md                              [UNCHANGED]
 │   └── tickets/
 │       ├── A-1.md                                  [UNCHANGED]
-│       └── A-2.md                                  [NEW]
+│       ├── A-2.md                                  [UNCHANGED]
+│       └── A-3.md                                  [NEW]
 ├── src/
 │   └── gbc_reader_prep/
 │       ├── __init__.py                             [UNCHANGED]
-│       ├── cli.py                                  [MODIFIED]
-│       ├── extract.py                              [NEW]
-│       └── preprocess.py                           [NEW]
+│       ├── cli.py                                  [UNCHANGED]
+│       ├── extract.py                              [UNCHANGED]
+│       ├── chapters.py                             [NEW]
+│       └── preprocess.py                           [MODIFIED]
 └── tests/
     ├── __init__.py                                 [UNCHANGED]
-    └── test_cli.py                                 [MODIFIED]
+    ├── test_cli.py                                 [UNCHANGED]
+    └── test_chapters.py                            [NEW]
 ```
 
 ## Per-file purpose
 
 - **`.gitignore`** — Standard Python ignores (venv, caches, dist, build artifacts).
 - **`README.md`** — Brief install + usage docs.
-- **`pyproject.toml`** — Project metadata, hatchling build config, dynamic version, dependencies, pytest config, CLI entry point. A-2 adds `pymupdf>=1.27.2.3` to runtime dependencies.
+- **`pyproject.toml`** — Project metadata, hatchling build config, dynamic version, dependencies, pytest config, CLI entry point. Already includes `pymupdf>=1.27.2.3` from A-2; A-3 reuses it.
 - **`GBC_Reader_Project_Plan.md`** — Source of truth for project scope, architecture, hardware decisions, and ticket list. Read first in every new conversation.
-- **`PROJECT_API.md`** — Cumulative API reference for the project. Read at start of every ticket; updated at close.
+- **`PROJECT_API.md`** — Cumulative API reference for the project. Read at start of every ticket; updated at close. A-3 update adds the `chapters` module and the `--show-chapters` flag.
 - **`PROJECT_TREE.md`** — Current directory layout with per-ticket annotations. Read at start of every ticket; updated at close.
-- **`docs/a2-findings.md`** — Findings template for the A-2 acceptance criterion: per-PDF observations from running text extraction on 3 sample PDFs. To be filled in during A-2 close-out.
-- **`docs/tickets/A-1.md`** — Completion synopsis for A-1 (Python project skeleton). Narrative record of decisions, conventions established, and hand-off notes.
-- **`docs/tickets/A-2.md`** *(new in A-2)* — Completion synopsis for A-2 (PDF text extraction PoC). Includes architecture overview, decisions made, and hand-off notes for A-3.
+- **`docs/a2-findings.md`** — Findings template for the A-2 acceptance criterion: per-PDF observations from running text extraction on 3 sample PDFs. Still pending fill-in from the user.
+- **`docs/tickets/A-1.md`** — Completion synopsis for A-1 (Python project skeleton). Decisions, conventions established, and hand-off notes.
+- **`docs/tickets/A-2.md`** — Completion synopsis for A-2 (PDF text extraction PoC + subcommand layering pattern).
+- **`docs/tickets/A-3.md`** *(new in A-3)* — Completion synopsis for A-3 (outline-based chapter detection + `--show-chapters` flag).
 - **`src/gbc_reader_prep/__init__.py`** — Package marker. Holds `__version__ = "0.1.0"`.
-- **`src/gbc_reader_prep/cli.py`** — Top-level CLI. Builds the argparse parser, registers subcommands, dispatches. A-2 adds subparsers wiring and the `preprocess` registration.
-- **`src/gbc_reader_prep/extract.py`** *(new in A-2)* — Low-level PDF text extraction with PyMuPDF. Single public function `extract_text`.
-- **`src/gbc_reader_prep/preprocess.py`** *(new in A-2)* — Handler for the `preprocess` subcommand. Exposes `add_subparser` and `run`.
+- **`src/gbc_reader_prep/cli.py`** — Top-level CLI. Builds the argparse parser, registers subcommands, dispatches. Unchanged in A-3.
+- **`src/gbc_reader_prep/extract.py`** — Low-level PDF text extraction with PyMuPDF. Single public function `extract_text`. Unchanged in A-3.
+- **`src/gbc_reader_prep/chapters.py`** *(new in A-3)* — Framework-agnostic chapter detection from a PDF's outline. Exposes `Chapter` (frozen dataclass), `detect_chapters_from_outline`, `detect_chapters_from_outline_path`, and `top_level_chapters`.
+- **`src/gbc_reader_prep/preprocess.py`** *(modified in A-3)* — Handler for the `preprocess` subcommand. A-3 adds the `--show-chapters` flag and the post-extraction chapter-listing block in `run`.
 - **`tests/__init__.py`** — Empty package marker.
-- **`tests/test_cli.py`** — Smoke tests for the CLI. A-1's 4 tests plus a new A-2 test for `preprocess` subcommand wiring.
+- **`tests/test_cli.py`** — Smoke tests for the CLI. Unchanged in A-3.
+- **`tests/test_chapters.py`** *(new in A-3)* — 10 tests covering outline-based chapter detection, with fixture PDFs built in-test via PyMuPDF's `set_toc`.
 
 ## Excluded from the tree
 
