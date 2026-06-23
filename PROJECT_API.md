@@ -1,6 +1,6 @@
 # Project API Reference — gbc-reader-prep
 
-> **Last updated:** GBCR-A3
+> **Last updated:** GBCR-A4
 > **Current version:** 0.1.0
 > **Python floor:** `>=3.11`
 > **Scope:** Desktop preprocessor subproject only. Firmware (Epic B+) is a separate codebase and not yet underway.
@@ -89,7 +89,7 @@ a `.book` file (A-8). The subcommand name does not change as it evolves.
 |---|---|---|---|---|
 | `pdf` (positional) | `pathlib.Path` | yes | — | Path to the input PDF |
 | `-o`, `--output` | `pathlib.Path` | yes | — | Path to the output file (`.txt` during A-2 / A-3) |
-| `--show-chapters` | flag | no | `False` | **(A-3)** After extraction, log the chapter list derived from the PDF's outline. Logged at INFO level. Temporary — likely folded into the `inspect` subcommand in A-5. |
+| `--show-chapters` | flag | no | `False` | **(A-3, extended A-4)** After extraction, log the chapter list derived from the PDF's outline, falling back to heuristic text matching (`Chapter \d+`, `Prologue`, `Epilogue`, `Introduction`) if the PDF has no outline. Logged at INFO level. Temporary — likely folded into the `inspect` subcommand in A-5. |
 
 Exit codes: `0` success, `2` input file not found, `1` other failure.
 
@@ -168,15 +168,16 @@ codes, and error handling for the extraction step are unchanged from A-2.
   Registers the `preprocess` subcommand on a parent subparsers group. Adds positional `pdf`, required `-o/--output`, and *(A-3)* optional `--show-chapters`. Sets `func=run` via `parser.set_defaults()` so `cli.main` can dispatch.
 
 - `run(args: argparse.Namespace) -> int`
-  Subcommand handler. Delegates to `extract_text(args.pdf, args.output)`, then if `args.show_chapters` is set, calls `detect_chapters_from_outline_path(args.pdf)` and logs the result. Returns `0` on success, `2` on `FileNotFoundError` (from either step), `1` on any other exception (logged via `logger.exception`).
+  Subcommand handler. Delegates to `extract_text(args.pdf, args.output)`, then if `args.show_chapters` is set, calls `detect_chapters_path(args.pdf)` *(A-4: outline, falling back to heuristic text matching)* and logs the result. Returns `0` on success, `2` on `FileNotFoundError` (from either step), `1` on any other exception (logged via `logger.exception`).
 
   Display convention: under `--show-chapters`, page numbers are logged
   as **1-based** (matching what PDF readers show); the `Chapter.start_page`
   values stored in memory remain 0-based.
 
-### `src/gbc_reader_prep/chapters.py` *(new in A-3)*
+### `src/gbc_reader_prep/chapters.py` *(modified in A-4)*
 
-Framework-agnostic chapter detection from a PDF's outline / bookmark tree.
+Framework-agnostic chapter detection from a PDF's outline / bookmark tree,
+plus (A-4) a regex-based heuristic fallback for PDFs with no outline.
 No argparse, no CLI concerns.
 
 **Third-party imports:**
@@ -215,6 +216,31 @@ No argparse, no CLI concerns.
   Pure-Python filter — returns only entries with `level == 1`,
   preserving input order. No `pymupdf` dependency.
 
+- `detect_chapters_from_heuristic(doc: pymupdf.Document) -> list[Chapter]` *(A-4)*
+  For each page, extracts text via `page.get_text()` and scans its lines
+  for the first one matching `_HEURISTIC_PATTERNS` (regexes, anchored to
+  line start, case-insensitive: `Chapter \d+`, `Prologue`, `Epilogue`,
+  `Introduction`). Each match becomes a `Chapter` at `level=1` with
+  `start_page` equal to the page's 0-based index and `title` set to the
+  matched line verbatim (stripped, original case preserved). Pages with
+  no matching line contribute nothing. Returns an empty list (with a
+  logged warning) if no page matches.
+
+- `detect_chapters_from_heuristic_path(pdf_path: Path | str) -> list[Chapter]` *(A-4)*
+  Convenience wrapper: opens the PDF, calls
+  `detect_chapters_from_heuristic`, closes the document. Lazily imports
+  `pymupdf`. **Raises:** `FileNotFoundError` if `pdf_path` does not exist.
+
+- `detect_chapters(doc: pymupdf.Document) -> list[Chapter]` *(A-4)*
+  Calls `detect_chapters_from_outline`; if that returns a non-empty list,
+  returns it unchanged. Otherwise falls back to
+  `detect_chapters_from_heuristic`. This is the function `preprocess.run`
+  uses under `--show-chapters`.
+
+- `detect_chapters_path(pdf_path: Path | str) -> list[Chapter]` *(A-4)*
+  Path-based wrapper around `detect_chapters`. **Raises:**
+  `FileNotFoundError` if `pdf_path` does not exist.
+
 ---
 
 ## Test layout
@@ -226,14 +252,15 @@ Empty package marker.
 
 Smoke tests for the CLI. A-1 ships 4 tests covering the A-1 acceptance criteria (`--version` output, `--verbose` log behavior, package install). A-2 adds at least one test for the `preprocess` subcommand wiring (e.g. `test_preprocess_help_runs`). No additional A-3 tests in this file; A-3's tests live in `tests/test_chapters.py`.
 
-### `tests/test_chapters.py` *(new in A-3, all 10 tests verified passing)*
+### `tests/test_chapters.py` *(modified in A-4, all 24 tests verified passing)*
 
 Unit tests for `chapters.py`. Fixture PDFs are built in-test via
-`pymupdf.open()` + `doc.new_page()` + `doc.set_toc()`; no external PDF
+`pymupdf.open()` + `doc.new_page()` + `doc.set_toc()` (outline fixtures)
+or `page.insert_text()` (heuristic-fallback fixtures); no external PDF
 files are required. Imports skip gracefully via `pytest.importorskip`
 if PyMuPDF isn't installed.
 
-Tests cover:
+Tests cover (A-3, outline-based):
 - Outline detection on a multi-chapter, multi-level fixture
 - Empty-outline branch (no chapters returned, warning logged)
 - Title whitespace stripping
@@ -244,6 +271,17 @@ Tests cover:
 - `top_level_chapters` accepts empty input
 - `detect_chapters_from_outline_path` raises `FileNotFoundError` for missing files
 - `detect_chapters_from_outline` accepts an open `Document` directly
+
+Tests cover (A-4, heuristic fallback and combined entry point):
+- `detect_chapters_from_heuristic` matches `Chapter \d+` lines across pages
+- Matches `Prologue` / `Epilogue` named sections
+- Case-insensitive matching (`CHAPTER 1`)
+- No-match case returns an empty list
+- `detect_chapters_from_heuristic_path` raises `FileNotFoundError` for missing files
+- `detect_chapters_from_heuristic` accepts an open `Document` directly
+- `detect_chapters`/`detect_chapters_path` prefer the outline when present
+- `detect_chapters`/`detect_chapters_path` fall back to heuristic matching when there is no outline
+- `detect_chapters` accepts an open `Document` directly
 
 ---
 

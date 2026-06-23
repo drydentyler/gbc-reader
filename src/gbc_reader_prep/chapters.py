@@ -5,9 +5,10 @@ to a PDF) and returns a list of Chapter records. It knows nothing about
 argparse, the CLI, or any other higher-level concern.
 
 If the PDF has no outline, ``detect_chapters_from_outline`` returns an
-empty list and logs a warning. The heuristic fallback for outline-less
-PDFs is the responsibility of ticket A-4 (see
-``GBC_Reader_Project_Plan.md`` §4 Epic A).
+empty list and logs a warning. For that case, A-4 adds a regex-based
+heuristic fallback (``detect_chapters_from_heuristic``) that scans each
+page's extracted text for lines matching common chapter-heading
+patterns (``Chapter 12``, ``Prologue``, ``Introduction``, etc.).
 
 Page indexing convention
 ------------------------
@@ -23,12 +24,13 @@ performs the conversion exactly once, at the boundary between PyMuPDF
 output and our domain model. Downstream code should never see a 1-based
 page number from this module.
 
-Refs: A-3
+Refs: A-3, A-4
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -164,3 +166,130 @@ def top_level_chapters(chapters: list[Chapter]) -> list[Chapter]:
         A new list containing only the entries whose ``level`` is 1.
     """
     return [c for c in chapters if c.level == 1]
+
+
+# Patterns matched against each line of a page's extracted text, anchored
+# to the start of the line. Case-insensitive so "CHAPTER 1" and "chapter 1"
+# both match. Title case is preserved in the captured ``Chapter.title`` —
+# matching is case-insensitive, but the stored title is verbatim from the
+# page text.
+_HEURISTIC_PATTERNS = [
+    re.compile(r"^chapter\s+\d+", re.IGNORECASE),
+    re.compile(r"^prologue\b", re.IGNORECASE),
+    re.compile(r"^epilogue\b", re.IGNORECASE),
+    re.compile(r"^introduction\b", re.IGNORECASE),
+]
+
+
+def detect_chapters_from_heuristic(doc: "pymupdf.Document") -> list[Chapter]:
+    """Detect chapter starts by regex-matching each page's extracted text.
+
+    Intended as a fallback for PDFs with no outline/bookmark tree (see
+    :func:`detect_chapters_from_outline`). For each page, the first line
+    of text matching one of ``_HEURISTIC_PATTERNS`` (``Chapter \\d+``,
+    ``Prologue``, ``Epilogue``, ``Introduction``) is treated as that
+    page's chapter heading. Pages with no matching line are skipped.
+
+    All detected chapters are reported at ``level=1`` — the heuristic has
+    no way to infer outline depth from page text alone.
+
+    Args:
+        doc: An open PyMuPDF Document.
+
+    Returns:
+        A list of :class:`Chapter` objects in page order. Empty list if
+        no page matches any pattern.
+    """
+    chapters: list[Chapter] = []
+    for page_index, page in enumerate(doc):
+        text = page.get_text()
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if any(pattern.match(stripped) for pattern in _HEURISTIC_PATTERNS):
+                chapters.append(
+                    Chapter(title=stripped, start_page=page_index, level=1)
+                )
+                break
+
+    if not chapters:
+        logger.warning(
+            "Heuristic chapter detection found no matching lines in any page"
+        )
+    else:
+        logger.info(
+            "Detected %d chapter entries via heuristic text matching",
+            len(chapters),
+        )
+    return chapters
+
+
+def detect_chapters_from_heuristic_path(pdf_path: Path | str) -> list[Chapter]:
+    """Convenience wrapper that opens ``pdf_path``, runs
+    :func:`detect_chapters_from_heuristic`, and closes the document.
+
+    Args:
+        pdf_path: Path to the input PDF.
+
+    Returns:
+        List of :class:`Chapter` objects detected via heuristic text
+        matching (empty list if no page matches any pattern).
+
+    Raises:
+        FileNotFoundError: If ``pdf_path`` does not exist.
+    """
+    import pymupdf
+
+    pdf_path = Path(pdf_path)
+    if not pdf_path.exists():
+        raise FileNotFoundError(f"PDF not found: {pdf_path}")
+
+    doc = pymupdf.open(str(pdf_path))
+    try:
+        return detect_chapters_from_heuristic(doc)
+    finally:
+        doc.close()
+
+
+def detect_chapters(doc: "pymupdf.Document") -> list[Chapter]:
+    """Detect chapters using the outline, falling back to heuristic text
+    matching if the PDF has no outline.
+
+    Args:
+        doc: An open PyMuPDF Document.
+
+    Returns:
+        Chapters from :func:`detect_chapters_from_outline` if the PDF has
+        an outline, otherwise the result of
+        :func:`detect_chapters_from_heuristic`.
+    """
+    chapters = detect_chapters_from_outline(doc)
+    if chapters:
+        return chapters
+    return detect_chapters_from_heuristic(doc)
+
+
+def detect_chapters_path(pdf_path: Path | str) -> list[Chapter]:
+    """Path-based convenience wrapper around :func:`detect_chapters`.
+
+    Args:
+        pdf_path: Path to the input PDF.
+
+    Returns:
+        See :func:`detect_chapters`.
+
+    Raises:
+        FileNotFoundError: If ``pdf_path`` does not exist.
+    """
+    import pymupdf
+
+    pdf_path = Path(pdf_path)
+    if not pdf_path.exists():
+        raise FileNotFoundError(f"PDF not found: {pdf_path}")
+
+    doc = pymupdf.open(str(pdf_path))
+    try:
+        return detect_chapters(doc)
+    finally:
+        doc.close()
