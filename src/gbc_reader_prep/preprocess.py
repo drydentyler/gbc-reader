@@ -3,13 +3,14 @@
 A-2 introduced this module as a thin argparse-facing wrapper around
 :func:`gbc_reader_prep.extract.extract_text`. A-3 adds an optional
 ``--show-chapters`` flag that, after extraction, logs the chapter list
-derived from the PDF's outline.
+derived from the PDF's outline. A-4 extends ``--show-chapters`` to fall
+back to heuristic text-based detection for PDFs with no outline.
 
 The shape of this module (``SUBCOMMAND`` constant, ``add_subparser``,
 ``run``) is the canonical pattern for all future subcommand modules in
 this project (see A-2 §4.4).
 
-Refs: A-3
+Refs: A-3, A-4
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import argparse
 import logging
 from pathlib import Path
 
-from .chapters import detect_chapters_from_outline_path
+from .chapters import detect_chapters_path
 from .extract import extract_text
 
 logger = logging.getLogger(__name__)
@@ -62,8 +63,9 @@ def add_subparser(
         action="store_true",
         help=(
             "After extraction, log the chapter list derived from the "
-            "PDF's outline (table of contents bookmarks). Logged at INFO "
-            "level."
+            "PDF's outline (table of contents bookmarks), falling back "
+            "to heuristic text matching (e.g. 'Chapter 1', 'Prologue') "
+            "if the PDF has no outline. Logged at INFO level."
         ),
     )
     parser.set_defaults(func=run)
@@ -89,7 +91,7 @@ def run(args: argparse.Namespace) -> int:
 
     if args.show_chapters:
         try:
-            chapters = detect_chapters_from_outline_path(args.pdf)
+            chapters = detect_chapters_path(args.pdf)
         except FileNotFoundError as exc:
             # Unlikely to reach here (extract_text would have raised first),
             # but kept explicit for symmetry with the extraction branch.
@@ -100,7 +102,10 @@ def run(args: argparse.Namespace) -> int:
             return 1
 
         if not chapters:
-            logger.info("No chapters detected (PDF has no outline).")
+            logger.info(
+                "No chapters detected (no outline, and no heuristic "
+                "pattern matched any page)."
+            )
         else:
             logger.info("Detected %d chapter entry/entries:", len(chapters))
             for ch in chapters:

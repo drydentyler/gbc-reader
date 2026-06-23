@@ -18,8 +18,12 @@ pymupdf = pytest.importorskip("pymupdf")
 
 from gbc_reader_prep.chapters import (  # noqa: E402  (after importorskip)
     Chapter,
+    detect_chapters,
+    detect_chapters_from_heuristic,
+    detect_chapters_from_heuristic_path,
     detect_chapters_from_outline,
     detect_chapters_from_outline_path,
+    detect_chapters_path,
     top_level_chapters,
 )
 
@@ -39,6 +43,22 @@ def _make_pdf_with_toc(
             doc.new_page()
         if toc:
             doc.set_toc(toc)
+        doc.save(str(path))
+    finally:
+        doc.close()
+
+
+def _make_pdf_with_text_pages(path: Path, pages: list[str]) -> None:
+    """Create a PDF at ``path`` with one page per string in ``pages``,
+    each page's first line of text set to the given string.
+
+    No outline is set, so this fixture exercises the heuristic fallback.
+    """
+    doc = pymupdf.open()
+    try:
+        for text in pages:
+            page = doc.new_page()
+            page.insert_text((72, 72), text)
         doc.save(str(path))
     finally:
         doc.close()
@@ -177,3 +197,117 @@ def test_detect_chapters_from_outline_accepts_open_document(
     finally:
         doc.close()
     assert chapters == [Chapter(title="Only Chapter", start_page=0, level=1)]
+
+
+def test_detect_chapters_from_heuristic_matches_chapter_lines(
+    tmp_path: Path,
+) -> None:
+    pdf = tmp_path / "heuristic_chapters.pdf"
+    _make_pdf_with_text_pages(
+        pdf,
+        pages=[
+            "Some front matter text.",
+            "Chapter 1\nIt was a dark and stormy night.",
+            "More body text.",
+            "Chapter 2\nThe next morning.",
+        ],
+    )
+    chapters = detect_chapters_from_heuristic_path(pdf)
+    assert chapters == [
+        Chapter(title="Chapter 1", start_page=1, level=1),
+        Chapter(title="Chapter 2", start_page=3, level=1),
+    ]
+
+
+def test_detect_chapters_from_heuristic_matches_named_sections(
+    tmp_path: Path,
+) -> None:
+    pdf = tmp_path / "heuristic_named.pdf"
+    _make_pdf_with_text_pages(
+        pdf,
+        pages=[
+            "Prologue\nBefore it all began.",
+            "Chapter 1\nThe story starts.",
+            "Epilogue\nAfter it all ended.",
+        ],
+    )
+    chapters = detect_chapters_from_heuristic_path(pdf)
+    assert [c.title for c in chapters] == ["Prologue", "Chapter 1", "Epilogue"]
+
+
+def test_detect_chapters_from_heuristic_is_case_insensitive(
+    tmp_path: Path,
+) -> None:
+    pdf = tmp_path / "heuristic_case.pdf"
+    _make_pdf_with_text_pages(pdf, pages=["CHAPTER 1\nBody text."])
+    chapters = detect_chapters_from_heuristic_path(pdf)
+    assert chapters == [Chapter(title="CHAPTER 1", start_page=0, level=1)]
+
+
+def test_detect_chapters_from_heuristic_no_matches(tmp_path: Path) -> None:
+    pdf = tmp_path / "heuristic_none.pdf"
+    _make_pdf_with_text_pages(pdf, pages=["Just some text.", "More text."])
+    assert detect_chapters_from_heuristic_path(pdf) == []
+
+
+def test_detect_chapters_from_heuristic_path_missing_file(
+    tmp_path: Path,
+) -> None:
+    missing = tmp_path / "does-not-exist.pdf"
+    with pytest.raises(FileNotFoundError):
+        detect_chapters_from_heuristic_path(missing)
+
+
+def test_detect_chapters_from_heuristic_accepts_open_document(
+    tmp_path: Path,
+) -> None:
+    pdf = tmp_path / "heuristic_direct.pdf"
+    _make_pdf_with_text_pages(pdf, pages=["Introduction\nWelcome."])
+    doc = pymupdf.open(str(pdf))
+    try:
+        chapters = detect_chapters_from_heuristic(doc)
+    finally:
+        doc.close()
+    assert chapters == [Chapter(title="Introduction", start_page=0, level=1)]
+
+
+def test_detect_chapters_prefers_outline_when_present(tmp_path: Path) -> None:
+    """detect_chapters should not fall back to heuristic matching when
+    the PDF already has a usable outline."""
+    pdf = tmp_path / "combined_with_outline.pdf"
+    _make_pdf_with_toc(
+        pdf,
+        page_count=3,
+        toc=[[1, "Chapter 1", 1], [1, "Chapter 2", 2]],
+    )
+    chapters = detect_chapters_path(pdf)
+    assert chapters == [
+        Chapter(title="Chapter 1", start_page=0, level=1),
+        Chapter(title="Chapter 2", start_page=1, level=1),
+    ]
+
+
+def test_detect_chapters_falls_back_to_heuristic_without_outline(
+    tmp_path: Path,
+) -> None:
+    pdf = tmp_path / "combined_without_outline.pdf"
+    _make_pdf_with_text_pages(
+        pdf,
+        pages=["Chapter 1\nText.", "Chapter 2\nMore text."],
+    )
+    chapters = detect_chapters_path(pdf)
+    assert chapters == [
+        Chapter(title="Chapter 1", start_page=0, level=1),
+        Chapter(title="Chapter 2", start_page=1, level=1),
+    ]
+
+
+def test_detect_chapters_accepts_open_document(tmp_path: Path) -> None:
+    pdf = tmp_path / "combined_direct.pdf"
+    _make_pdf_with_text_pages(pdf, pages=["Chapter 1\nText."])
+    doc = pymupdf.open(str(pdf))
+    try:
+        chapters = detect_chapters(doc)
+    finally:
+        doc.close()
+    assert chapters == [Chapter(title="Chapter 1", start_page=0, level=1)]
