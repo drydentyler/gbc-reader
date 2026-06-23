@@ -1,6 +1,6 @@
 # Project API Reference — gbc-reader-prep
 
-> **Last updated:** GBCR-A4
+> **Last updated:** GBCR-A5
 > **Current version:** 0.1.0
 > **Python floor:** `>=3.11`
 > **Scope:** Desktop preprocessor subproject only. Firmware (Epic B+) is a separate codebase and not yet underway.
@@ -88,10 +88,13 @@ a `.book` file (A-8). The subcommand name does not change as it evolves.
 | Argument | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `pdf` (positional) | `pathlib.Path` | yes | — | Path to the input PDF |
-| `-o`, `--output` | `pathlib.Path` | yes | — | Path to the output file (`.txt` during A-2 / A-3) |
-| `--show-chapters` | flag | no | `False` | **(A-3, extended A-4)** After extraction, log the chapter list derived from the PDF's outline, falling back to heuristic text matching (`Chapter \d+`, `Prologue`, `Epilogue`, `Introduction`) if the PDF has no outline. Logged at INFO level. Temporary — likely folded into the `inspect` subcommand in A-5. |
+| `-o`, `--output` | `pathlib.Path` | no (required unless `--inspect`) | — | Path to the output file (`.txt` during A-2 / A-3) |
+| `--show-chapters` | flag | no | `False` | **(A-3, extended A-4)** After extraction, log the chapter list derived from the PDF's outline, falling back to heuristic text matching (`Chapter \d+`, `Prologue`, `Epilogue`, `Introduction`) if the PDF has no outline. Logged at INFO level. |
+| `--inspect` | flag | no | `False` | **(A-5)** Dry run: detect chapters and the proposed main-content page range (trimming detected back matter — Appendix/Notes/Bibliography/Index/About the Author/Acknowledg(e)ments), log a report, and exit without writing any output file. `--output` is not required with this flag. |
+| `--start-page` | `int` | no | `None` | **(A-5)** Override the auto-detected main-content start page (0-indexed). Works with or without `--inspect`. |
+| `--end-page` | `int` | no | `None` | **(A-5)** Override the auto-detected main-content end page (0-indexed, inclusive). Works with or without `--inspect`. |
 
-Exit codes: `0` success, `2` input file not found, `1` other failure.
+Exit codes: `0` success, `2` input file not found (or missing `-o/--output` when `--inspect` is absent), `1` other failure.
 
 ---
 
@@ -240,6 +243,34 @@ No argparse, no CLI concerns.
 - `detect_chapters_path(pdf_path: Path | str) -> list[Chapter]` *(A-4)*
   Path-based wrapper around `detect_chapters`. **Raises:**
   `FileNotFoundError` if `pdf_path` does not exist.
+
+### `src/gbc_reader_prep/trim.py` *(new in A-5)*
+
+Front/back matter trimming. Framework-agnostic — no argparse, no CLI
+concerns, no PyMuPDF import (operates only on `Chapter` records and a
+page count).
+
+**Public symbols:**
+
+- `TrimResult` (frozen dataclass): `start_page: int`, `end_page: int`
+  (inclusive), `back_matter_title: str | None`,
+  `back_matter_start_page: int | None`.
+
+- `detect_back_matter_chapter(chapters: list[Chapter]) -> Chapter | None`
+  Returns the earliest chapter (by `start_page`) whose title matches a
+  back-matter pattern (`Appendix`, `Notes`, `Bibliography`, `Index`,
+  `About the Author`, `Acknowledgments`/`Acknowledgements`; all
+  case-insensitive, anchored to the start of the title). `None` if no
+  chapter matches.
+
+- `detect_content_bounds(chapters: list[Chapter], page_count: int) -> TrimResult`
+  `start_page` is the first detected chapter's start page (or `0` if no
+  chapters). `end_page` is `page_count - 1` unless a back-matter chapter
+  is detected *after* `start_page`, in which case it is the page
+  immediately before that chapter. A back-matter match at or before
+  `start_page` (e.g. a heuristic false positive on the very first
+  detected chapter) is ignored, so the whole book is never trimmed away.
+  **Raises:** `ValueError` if `page_count < 1`.
 
 ---
 
