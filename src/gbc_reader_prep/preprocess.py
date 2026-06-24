@@ -24,6 +24,7 @@ import logging
 from pathlib import Path
 
 from .chapters import detect_chapters_path
+from .cover import extract_cover
 from .extract import extract_text
 from .trim import detect_content_bounds
 
@@ -74,6 +75,15 @@ def add_subparser(
             "PDF's outline (table of contents bookmarks), falling back "
             "to heuristic text matching (e.g. 'Chapter 1', 'Prologue') "
             "if the PDF has no outline. Logged at INFO level."
+        ),
+    )
+    parser.add_argument(
+        "--extract-cover",
+        action="store_true",
+        help=(
+            "Extract the first page of the PDF as a cover image, "
+            "downscaled to 400x240 with 1-bit Floyd-Steinberg dithering. "
+            "Saved as cover.png alongside --output."
         ),
     )
     parser.add_argument(
@@ -193,6 +203,17 @@ def run(args: argparse.Namespace) -> int:
     except Exception:  # noqa: BLE001 — surface as a single user-visible failure
         logger.exception("Preprocessing failed")
         return 1
+
+    if args.extract_cover:
+        try:
+            cover_path, _ = extract_cover(args.pdf, args.output.parent)
+            logger.info("Extracted cover image to %s", cover_path)
+        except FileNotFoundError as exc:
+            logger.error("%s", exc)
+            return 2
+        except Exception:  # noqa: BLE001
+            logger.exception("Cover extraction failed")
+            return 1
 
     if args.show_chapters:
         try:
