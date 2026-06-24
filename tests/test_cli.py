@@ -49,3 +49,70 @@ def test_preprocess_help_runs(capsys):
     assert exc_info.value.code == 0
     out = capsys.readouterr().out
     assert "preprocess" in out.lower()
+
+
+def test_preprocess_requires_output_without_inspect(tmp_path, caplog):
+    """A-5: -o/--output is required unless --inspect is given."""
+    pymupdf = pytest.importorskip("pymupdf")
+    pdf = tmp_path / "book.pdf"
+    doc = pymupdf.open()
+    doc.new_page()
+    doc.save(str(pdf))
+    doc.close()
+
+    assert main(["preprocess", str(pdf)]) == 2
+    assert "output" in caplog.text.lower()
+
+
+def test_preprocess_inspect_reports_proposed_bounds(tmp_path, caplog):
+    """A-5: --inspect prints a dry-run report and writes no output file."""
+    pymupdf = pytest.importorskip("pymupdf")
+    pdf = tmp_path / "book.pdf"
+    doc = pymupdf.open()
+    for _ in range(5):
+        doc.new_page()
+    doc.set_toc([[1, "Chapter 1", 1], [1, "Appendix A", 4]])
+    doc.save(str(pdf))
+    doc.close()
+
+    caplog.set_level("INFO", logger="gbc_reader_prep")
+    assert main(["preprocess", str(pdf), "--inspect"]) == 0
+    assert "Proposed main content: pages 1-3" in caplog.text
+    assert "Appendix A" in caplog.text
+    assert not (tmp_path / "book.txt").exists()
+
+
+def test_preprocess_inspect_missing_pdf_returns_two(tmp_path):
+    missing = tmp_path / "does-not-exist.pdf"
+    assert main(["preprocess", str(missing), "--inspect"]) == 2
+
+
+def test_preprocess_inspect_respects_start_end_page_overrides(tmp_path, caplog):
+    """A-5: --start-page/--end-page override auto-detected bounds."""
+    pymupdf = pytest.importorskip("pymupdf")
+    pdf = tmp_path / "book.pdf"
+    doc = pymupdf.open()
+    for _ in range(5):
+        doc.new_page()
+    doc.set_toc([[1, "Chapter 1", 1], [1, "Appendix A", 4]])
+    doc.save(str(pdf))
+    doc.close()
+
+    caplog.set_level("INFO", logger="gbc_reader_prep")
+    assert (
+        main(
+            [
+                "preprocess",
+                str(pdf),
+                "--inspect",
+                "--start-page",
+                "1",
+                "--end-page",
+                "4",
+            ]
+        )
+        == 0
+    )
+    assert "Proposed main content: pages 2-5" in caplog.text
+    assert "overridden via --start-page" in caplog.text
+    assert "overridden via --end-page" in caplog.text
