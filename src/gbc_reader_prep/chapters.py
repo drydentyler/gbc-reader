@@ -88,6 +88,7 @@ def detect_chapters_from_outline(doc: "pymupdf.Document") -> list[Chapter]:
 
     chapters: list[Chapter] = []
     skipped = 0
+    misplaced_covers = 0
     for entry in toc:
         # Defensive: PyMuPDF's documented format is [lvl, title, page] in
         # simple mode, but we use indexed access (not unpacking) to tolerate
@@ -106,10 +107,28 @@ def detect_chapters_from_outline(doc: "pymupdf.Document") -> list[Chapter]:
             )
             continue
 
+        start_page = page_1_indexed - 1
+
+        # A "Cover" outline entry should always resolve to the very first
+        # page. Some PDFs instead link "Cover" to an image of the cover
+        # placed near the end of the book (e.g. a back-cover scan), which
+        # would otherwise make downstream consumers treat that page as
+        # where the book's main content begins. Drop such entries rather
+        # than trust the linked page (see issue #37 / A-4).
+        if title.strip().lower() == "cover" and start_page != 0:
+            misplaced_covers += 1
+            logger.debug(
+                "Skipping 'Cover' outline entry at level %d: resolves to "
+                "page %d instead of the first page",
+                level,
+                start_page,
+            )
+            continue
+
         chapters.append(
             Chapter(
                 title=title.strip(),
-                start_page=page_1_indexed - 1,
+                start_page=start_page,
                 level=level,
             )
         )
@@ -117,6 +136,12 @@ def detect_chapters_from_outline(doc: "pymupdf.Document") -> list[Chapter]:
     if skipped:
         logger.warning(
             "Skipped %d outline entries with no resolvable page", skipped
+        )
+    if misplaced_covers:
+        logger.warning(
+            "Skipped %d 'Cover' outline entry/entries that resolved to a "
+            "page other than the first page",
+            misplaced_covers,
         )
     logger.info("Detected %d chapter entries from outline", len(chapters))
     return chapters

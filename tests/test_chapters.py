@@ -87,6 +87,76 @@ def test_detect_chapters_with_outline(tmp_path: Path) -> None:
     ]
 
 
+def test_detect_chapters_drops_cover_entry_linked_to_back_of_book(
+    tmp_path: Path,
+) -> None:
+    """A 'Cover' outline entry that resolves to a page other than the
+    first page (e.g. a cover image scan placed at the back of the book)
+    must be dropped rather than treated as where the book begins.
+
+    Regression test for issue #37 / A-4.
+    """
+    pdf = tmp_path / "misplaced_cover.pdf"
+    _make_pdf_with_toc(
+        pdf,
+        page_count=10,
+        toc=[
+            [1, "Cover", 9],
+            [1, "Title Page", 1],
+            [1, "Copyright", 2],
+            [1, "Chapter 1", 3],
+        ],
+    )
+
+    chapters = detect_chapters_from_outline_path(pdf)
+
+    assert chapters == [
+        Chapter(title="Title Page", start_page=0, level=1),
+        Chapter(title="Copyright", start_page=1, level=1),
+        Chapter(title="Chapter 1", start_page=2, level=1),
+    ]
+
+
+def test_detect_chapters_keeps_cover_entry_on_first_page(
+    tmp_path: Path,
+) -> None:
+    """A 'Cover' entry that correctly resolves to the first page is kept."""
+    pdf = tmp_path / "correct_cover.pdf"
+    _make_pdf_with_toc(
+        pdf,
+        page_count=3,
+        toc=[
+            [1, "Cover", 1],
+            [1, "Chapter 1", 2],
+        ],
+    )
+
+    chapters = detect_chapters_from_outline_path(pdf)
+
+    assert chapters == [
+        Chapter(title="Cover", start_page=0, level=1),
+        Chapter(title="Chapter 1", start_page=1, level=1),
+    ]
+
+
+def test_detect_chapters_cover_check_is_case_insensitive(
+    tmp_path: Path,
+) -> None:
+    pdf = tmp_path / "cover_case.pdf"
+    _make_pdf_with_toc(
+        pdf,
+        page_count=5,
+        toc=[
+            [1, "COVER", 5],
+            [1, "Title Page", 1],
+        ],
+    )
+
+    chapters = detect_chapters_from_outline_path(pdf)
+
+    assert chapters == [Chapter(title="Title Page", start_page=0, level=1)]
+
+
 def test_detect_chapters_no_outline(tmp_path: Path) -> None:
     pdf = tmp_path / "no_toc.pdf"
     _make_pdf_with_toc(pdf, page_count=3, toc=[])
