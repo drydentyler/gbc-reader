@@ -367,7 +367,7 @@ top of the display.
   Builds a blank chapter title page with `title` centered both horizontally and vertically. Word-wraps `title` (via `wrap_text`) if it doesn't fit one line, clamps to `lines_per_page(...)` lines, then centers that whole block of lines vertically (splitting blank padding above/below, extra row going below on an odd split) and centers each line horizontally (via `center_line`). All other lines on the page are blank. Returns a `Page` with `is_title_page=True`.
 
 - `strip_chapter_heading(text: str, title: str) -> str` *(new in A-7 follow-up)*
-  Collapses `text`'s whitespace to single spaces, then repeatedly strips, from the start, any combination (in either order) of a known heading-prefix pattern (`Chapter N`, `Part N`/roman numeral, `Section N`, `Prologue`, `Epilogue`, `Introduction`; case-insensitive) and/or a literal restatement of `title` (case-insensitive), until neither matches any more. Used so a chapter's body text doesn't visibly repeat the heading already shown on its `make_title_page` title page. No-op (aside from whitespace collapsing) if no heading match is found at the start.
+  Collapses `text`'s whitespace to single spaces, then repeatedly strips, from the start, any combination (in any order) of: a known heading-prefix pattern (`Chapter N`, `Part N`/roman numeral, `Section N`, `Prologue`, `Epilogue`, `Introduction`; case-insensitive); a literal restatement of `title` (case-insensitive); or, if `title` itself starts with one of those same prefix patterns (e.g. `"Part I: Nonhuman Minds"`, `"Introduction: Hard Calls and Easy Calls"`), a restatement of just the bare subtitle after that label (e.g. `"Nonhuman Minds"`, `"Hard Calls and Easy Calls"`) — covering source PDFs that render the label and subtitle as separate heading lines rather than `title` verbatim. Continues until none of these match any more. Used so a chapter's body text doesn't visibly repeat the heading already shown on its `make_title_page` title page. No-op (aside from whitespace collapsing) if no heading match is found at the start.
 
 - `paginate_chapters(page_texts: list[str], chapters: list[Chapter], font_metrics: FontMetrics = DEFAULT_FONT_METRICS, display_width: int = 400, display_height: int = 240, start_page: int = 0, end_page: int | None = None) -> list[Page]`
   Core layout function. Groups chapters whose `start_page` falls in `[start_page, end_page]` (sorted by `start_page`; if none fall in range, treats the whole range as one unnamed chapter), concatenates each chapter's page texts, *(A-7 follow-up)* strips a leading heading restatement via `strip_chapter_heading(...)` when the chapter has a non-blank title, word-wraps to `chars_per_line(...)`, and chunks into pages of `lines_per_page(...)` lines. Before starting each chapter's text, flushes (and blank-pads) any non-empty page buffer left over from the previous chapter — this is what enforces the chapter-start-at-top rule. *(A-7 follow-up)* Immediately after that flush, if the chapter's title is non-blank, inserts a `make_title_page(...)` page (with that chapter's `chapter_id`) before its body text; the synthetic single-chapter fallback (blank title) gets no title page (and no heading-stripping). `end_page` defaults to `len(page_texts) - 1`.
@@ -418,7 +418,7 @@ Tests cover (A-4, heuristic fallback and combined entry point):
 - `detect_chapters`/`detect_chapters_path` fall back to heuristic matching when there is no outline
 - `detect_chapters` accepts an open `Document` directly
 
-### `tests/test_paginate.py` *(new in A-7, extended in A-7 follow-up; 33 tests verified passing)*
+### `tests/test_paginate.py` *(new in A-7, extended in A-7 follow-up; 35 tests verified passing)*
 
 Unit tests for `paginate.py`, plus CLI integration via `main()`. Fixture
 PDFs are built in-test via `pymupdf.open()` + `doc.new_page()` +
@@ -437,8 +437,11 @@ Tests cover:
 - `strip_chapter_heading`: stripping a `Chapter N <title>` restatement,
   stripping a `Part N <title>` restatement with trailing junk text
   preserved after it, leaving unrelated text unchanged (aside from
-  whitespace collapsing), and stripping a known prefix pattern even with
-  a blank title
+  whitespace collapsing), stripping a known prefix pattern even with a
+  blank title, and — for `"Part N: <subtitle>"`/`"Introduction:
+  <subtitle>"`-style titles — stripping a label-then-bare-subtitle
+  heading even when the subtitle isn't restated verbatim as part of
+  `title`'s full text
 - `paginate_chapters`: no-chapters fallback to a single chapter (no title
   page emitted for the blank-title fallback), blank-line padding on a
   short final page, chapter-start-at-top enforcement (a title page plus

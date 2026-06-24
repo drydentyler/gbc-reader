@@ -242,18 +242,39 @@ _HEADING_PREFIX_PATTERNS = [
 ]
 
 
+def _strip_heading_prefixes(text: str) -> str:
+    """Repeatedly strip any leading ``_HEADING_PREFIX_PATTERNS`` match (and
+    the punctuation/whitespace immediately following it) from ``text``."""
+    changed = True
+    while changed:
+        changed = False
+        for pattern in _HEADING_PREFIX_PATTERNS:
+            match = pattern.match(text)
+            if match:
+                text = text[match.end() :].lstrip(" :.-")
+                changed = True
+    return text
+
+
 def strip_chapter_heading(text: str, title: str) -> str:
     """Strip a leading chapter-heading restatement from ``text``.
 
     The extracted page text for a chapter's first page typically still
     contains that chapter's own heading (e.g. ``"Chapter 1 Some Title"``
-    or ``"Part I Some Title"``) — now redundant since :func:`make_title_page`
-    already displays it on its own dedicated title page. This repeatedly
-    strips, from the start of ``text``, any combination of a known
-    heading-prefix pattern (``Chapter N``, ``Part N``/roman numeral,
-    ``Section N``, ``Prologue``, ``Epilogue``, ``Introduction``) and/or a
-    literal restatement of ``title``, in either order, until neither
-    matches any more.
+    or ``"Part I: Nonhuman Minds"``) — now redundant since
+    :func:`make_title_page` already displays it on its own dedicated title
+    page. This repeatedly strips, from the start of ``text``, any
+    combination of: a known heading-prefix pattern (``Chapter N``, ``Part
+    N``/roman numeral, ``Section N``, ``Prologue``, ``Epilogue``,
+    ``Introduction``); a literal restatement of ``title``; or, if
+    ``title`` itself begins with one of those same prefix patterns (e.g.
+    a title of ``"Part I: Nonhuman Minds"`` or ``"Introduction: Hard
+    Calls and Easy Calls"``), a restatement of just the bare subtitle
+    after that label (``"Nonhuman Minds"`` / ``"Hard Calls and Easy
+    Calls"``) — since the source PDF may render the numbered/labeled
+    prefix and the subtitle as separate heading lines rather than
+    ``title`` verbatim. Stripping continues, in any order, until none of
+    these match any more.
 
     Args:
         text: Whitespace-arbitrary chapter body text (e.g. from joining
@@ -267,6 +288,9 @@ def strip_chapter_heading(text: str, title: str) -> str:
     """
     collapsed = " ".join(text.split())
     title_norm = " ".join(title.split())
+    bare_title = _strip_heading_prefixes(title_norm) if title_norm else ""
+
+    candidates = [c for c in (title_norm, bare_title) if c]
 
     changed = True
     while changed:
@@ -276,9 +300,10 @@ def strip_chapter_heading(text: str, title: str) -> str:
             if match:
                 collapsed = collapsed[match.end() :].lstrip(" :.-")
                 changed = True
-        if title_norm and collapsed.lower().startswith(title_norm.lower()):
-            collapsed = collapsed[len(title_norm) :].lstrip(" :.-")
-            changed = True
+        for candidate in candidates:
+            if collapsed.lower().startswith(candidate.lower()):
+                collapsed = collapsed[len(candidate) :].lstrip(" :.-")
+                changed = True
 
     return collapsed
 

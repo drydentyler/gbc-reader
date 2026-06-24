@@ -120,6 +120,18 @@ def test_strip_chapter_heading_blank_title_only_strips_known_prefixes():
     assert strip_chapter_heading(text, "") == "some body text"
 
 
+def test_strip_chapter_heading_strips_part_label_title_and_bare_subtitle():
+    text = "PART I NONHUMAN MINDS OceanofPDF.com Some real body text follows."
+    result = strip_chapter_heading(text, "Part I: Nonhuman Minds")
+    assert result == "OceanofPDF.com Some real body text follows."
+
+
+def test_strip_chapter_heading_strips_introduction_label_and_bare_subtitle():
+    text = "Introduction Hard Calls and Easy Calls The real content starts here."
+    result = strip_chapter_heading(text, "Introduction: Hard Calls and Easy Calls")
+    assert result == "The real content starts here."
+
+
 def test_load_font_metrics_reads_json(tmp_path):
     path = tmp_path / "font.json"
     path.write_text(json.dumps({"char_width_px": 8, "line_height_px": 16}))
