@@ -22,6 +22,34 @@ logger = logging.getLogger(__name__)
 PAGE_SEPARATOR = b"\x0c"
 
 
+def extract_text_pages(pdf_path: Path | str) -> list[str]:
+    """Extract text from every page of a PDF, returned as an in-memory list.
+
+    Unlike :func:`extract_text`, this does no file I/O and applies no page
+    separator — callers that need each page's text individually (e.g. the
+    pagination engine in :mod:`gbc_reader_prep.paginate`) use this instead
+    of re-parsing the form-feed-delimited ``.txt`` output.
+
+    Args:
+        pdf_path: Path to the input PDF.
+
+    Returns:
+        A list of per-page text, 0-indexed, in document order.
+
+    Raises:
+        FileNotFoundError: If pdf_path does not exist.
+    """
+    pdf_path = Path(pdf_path)
+    if not pdf_path.exists():
+        raise FileNotFoundError(f"PDF not found: {pdf_path}")
+
+    doc = pymupdf.open(pdf_path)
+    try:
+        return [page.get_text() for page in doc]
+    finally:
+        doc.close()
+
+
 def extract_text(pdf_path: Path | str, out_path: Path | str) -> int:
     """Extract plain text from every page of a PDF into a UTF-8 .txt file.
 

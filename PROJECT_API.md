@@ -1,6 +1,6 @@
 # Project API Reference — gbc-reader-prep
 
-> **Last updated:** GBCR-A5
+> **Last updated:** GBCR-A7
 > **Current version:** 0.1.0
 > **Python floor:** `>=3.11`
 > **Scope:** Desktop preprocessor subproject only. Firmware (Epic B+) is a separate codebase and not yet underway.
@@ -94,8 +94,10 @@ a `.book` file (A-8). The subcommand name does not change as it evolves.
 | `--start-page` | `int` | no | `None` | **(A-5)** Override the auto-detected main-content start page (0-indexed). Works with or without `--inspect`. |
 | `--end-page` | `int` | no | `None` | **(A-5)** Override the auto-detected main-content end page (0-indexed, inclusive). Works with or without `--inspect`. |
 | `--extract-cover` | flag | no | `False` | **(A-6)** After extraction, render the PDF's first page as a cover image: downscale to 400x240 and apply 1-bit Floyd-Steinberg dithering. Saved as `cover.png` in the same directory as `--output`. |
+| `--paginate` | flag | no | `False` | **(A-7)** Lay out the detected main-content text into 400x240 display pages and log the resulting page count (overall and per-chapter), for manual sanity-checking. Works with or without `--inspect`; uses the same `--start-page`/`--end-page` bounds. |
+| `--font-metrics` | `pathlib.Path` | no | `None` | **(A-7)** Path to a JSON font metrics file (`{"char_width_px": <int>, "line_height_px": <int>}`) used by `--paginate` to compute characters-per-line and lines-per-page. Defaults to a placeholder 6x10px grid (`paginate.DEFAULT_FONT_METRICS`) until the firmware's real font (B-4) is finalized. |
 
-Exit codes: `0` success, `2` input file not found (or missing `-o/--output` when `--inspect` is absent), `1` other failure.
+Exit codes: `0` success, `2` input file not found (or missing `-o/--output` when `--inspect` is absent, or `--font-metrics` file not found), `1` other failure.
 
 ---
 
@@ -133,9 +135,9 @@ modifications to `cli.py` were required.
 - `main(argv: list[str] | None = None) -> int`
   Entry point. Parses args, calls `configure_logging(args.verbose)`, then dispatches to the chosen subcommand's handler via `getattr(args, "func", None)`. Returns the subcommand's exit code, or 0 when no subcommand is given (prints help).
 
-### `src/gbc_reader_prep/extract.py` (A-2, unchanged in A-3)
+### `src/gbc_reader_prep/extract.py` *(modified in A-7)*
 
-Low-level PDF text extraction using PyMuPDF. Framework-agnostic — no argparse, no CLI concerns. Called by `preprocess.run`.
+Low-level PDF text extraction using PyMuPDF. Framework-agnostic — no argparse, no CLI concerns. Called by `preprocess.run` and (A-7) by `paginate.paginate_path`.
 
 **Third-party imports:**
 - `pymupdf`
@@ -152,18 +154,25 @@ Low-level PDF text extraction using PyMuPDF. Framework-agnostic — no argparse,
   - `FileNotFoundError` if `pdf_path` does not exist
   - PyMuPDF exceptions propagate unchanged (corrupt / unsupported PDF)
 
-### `src/gbc_reader_prep/preprocess.py` *(modified in A-6)*
+- `extract_text_pages(pdf_path: Path | str) -> list[str]` *(new in A-7)*
+  In-memory counterpart to `extract_text`: opens the PDF and returns a list of per-page text (0-indexed, document order), with no file I/O and no page separator. Used by `paginate.paginate_path` so the pagination engine doesn't have to re-parse a form-feed-delimited `.txt` file.
+  **Raises:** `FileNotFoundError` if `pdf_path` does not exist.
+
+### `src/gbc_reader_prep/preprocess.py` *(modified in A-7)*
 
 Handler for the `preprocess` subcommand. A-3 adds the `--show-chapters`
 flag and the chapter-listing block in `run`. A-6 adds the
-`--extract-cover` flag. Subcommand shape, exit codes, and error handling
-for the extraction step are unchanged from A-2.
+`--extract-cover` flag. A-7 adds `--paginate` and `--font-metrics`,
+wired into both `run` (the normal extraction path) and `_report_trim`
+(the `--inspect` dry-run path). Subcommand shape, exit codes, and error
+handling for the extraction step are unchanged from A-2.
 
-**Third-party imports:** none directly (PyMuPDF/Pillow used transitively via `extract`, `chapters`, and `cover`).
+**Third-party imports:** none directly (PyMuPDF/Pillow used transitively via `extract`, `chapters`, `cover`, and `paginate`).
 **Project imports:**
 - `from .chapters import detect_chapters_path`
-- `from .cover import extract_cover` *(new in A-6)*
-- `from .extract import extract_text`
+- `from .cover import extract_cover`
+- `from .extract import extract_text, extract_text_pages` *(`extract_text_pages` new in A-7)*
+- `from .paginate import DEFAULT_FONT_METRICS, FontMetrics, load_font_metrics, paginate_chapters` *(new in A-7)*
 - `from .trim import detect_content_bounds`
 
 **Module-level constants:**
@@ -172,14 +181,25 @@ for the extraction step are unchanged from A-2.
 **Public functions:**
 
 - `add_subparser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser`
-  Registers the `preprocess` subcommand on a parent subparsers group. Adds positional `pdf`, required `-o/--output`, optional `--show-chapters`, `--inspect`, `--start-page`/`--end-page`, and *(A-6)* `--extract-cover`. Sets `func=run` via `parser.set_defaults()` so `cli.main` can dispatch.
+  Registers the `preprocess` subcommand on a parent subparsers group. Adds positional `pdf`, required `-o/--output`, optional `--show-chapters`, `--inspect`, `--start-page`/`--end-page`, `--extract-cover`, and *(A-7)* `--paginate`/`--font-metrics`. Sets `func=run` via `parser.set_defaults()` so `cli.main` can dispatch.
 
 - `run(args: argparse.Namespace) -> int`
-  Subcommand handler. Delegates to `extract_text(args.pdf, args.output)`, then *(A-6)* if `args.extract_cover` is set, calls `extract_cover(args.pdf, args.output.parent)` to render and save `cover.png`, then if `args.show_chapters` is set, calls `detect_chapters_path(args.pdf)` *(A-4: outline, falling back to heuristic text matching)* and logs the result. Returns `0` on success, `2` on `FileNotFoundError` (from any step), `1` on any other exception (logged via `logger.exception`).
+  Subcommand handler. Delegates to `extract_text(args.pdf, args.output)`, then if `args.extract_cover` is set, calls `extract_cover(args.pdf, args.output.parent)` to render and save `cover.png`, then if `args.show_chapters` is set, calls `detect_chapters_path(args.pdf)` (outline, falling back to heuristic text matching) and logs the result, then *(A-7)* if `args.paginate` is set, resolves font metrics (`_load_font_metrics`), detects chapters and content bounds, and calls `_report_pagination` to log a page-count summary. Returns `0` on success, `2` on `FileNotFoundError` (from any step, including a missing `--font-metrics` file), `1` on any other exception (logged via `logger.exception`).
 
   Display convention: under `--show-chapters`, page numbers are logged
   as **1-based** (matching what PDF readers show); the `Chapter.start_page`
   values stored in memory remain 0-based.
+
+**Private helpers** *(new in A-7)*:
+
+- `_load_font_metrics(args: argparse.Namespace) -> FontMetrics`
+  Returns `DEFAULT_FONT_METRICS` if `args.font_metrics` is `None`, otherwise loads and returns `load_font_metrics(args.font_metrics)`. **Raises:** `FileNotFoundError` if the given path doesn't exist (caught by both call sites and mapped to exit code `2`).
+
+- `_report_pagination(pdf_path: Path, chapters: list[Chapter], start_page: int, end_page: int, font_metrics: FontMetrics) -> None`
+  Calls `extract_text_pages(pdf_path)` and `paginate_chapters(...)`, then logs (INFO level) the total page count for the given bounds and a per-chapter page-count breakdown (`Chapter <id>: <n> page(s)`, sorted by chapter id).
+
+- `_report_trim(args: argparse.Namespace) -> int` *(modified in A-7)*
+  Unchanged `--inspect` behavior (detect chapters + content bounds, apply overrides, log report), plus: if `args.paginate` is set, resolves font metrics and calls `_report_pagination` with the same bounds used in the trim report, before returning. Still writes no output file.
 
 ### `src/gbc_reader_prep/chapters.py` *(modified in A-4)*
 
@@ -301,6 +321,48 @@ concerns. Called by `preprocess.run` under `--extract-cover`.
 - `extract_cover(pdf_path: Path | str, out_dir: Path | str) -> tuple[Path, str]`
   Calls `render_cover`, saves the result as `out_dir / "cover.png"` (creating `out_dir` if missing), and returns `(cover_path, cover_to_base64(image))`. This is the function `preprocess.run` calls under `--extract-cover`, and the function A-8's `.book` writer should call to populate the `cover_png_base64` field.
 
+### `src/gbc_reader_prep/paginate.py` *(new in A-7)*
+
+Pagination engine. Framework-agnostic — no argparse, no CLI concerns. Lays
+out per-page extracted text into fixed-size 400x240 display pages against
+a fixed-width character grid (`FontMetrics`), enforcing the rule that a
+chapter's first page always begins with that chapter's first line at the
+top of the display.
+
+**Third-party imports:** none directly (lazily imports `pymupdf`/etc. transitively via `chapters`/`extract`/`trim` inside `paginate_path` only).
+**Project imports:**
+- `from .chapters import Chapter` (module level)
+- `from .chapters import detect_chapters_path`, `from .extract import extract_text_pages`, `from .trim import detect_content_bounds` (lazily, inside `paginate_path`)
+
+**Module-level constants:**
+- `DISPLAY_WIDTH: int = 400`, `DISPLAY_HEIGHT: int = 240` — target display resolution, matching `cover.py`'s constants.
+- `DEFAULT_FONT_METRICS: FontMetrics = FontMetrics(char_width_px=6, line_height_px=10)` — placeholder 6x10px monospace grid, chosen to land near the ~250 words/page acceptance-criterion ballpark. **Must be replaced** with values matching the real firmware font once B-4 (custom bitmap font) lands; pass real values via `--font-metrics` / `load_font_metrics` in the meantime. See project plan Q7.
+
+**Public symbols:**
+
+- `FontMetrics` (frozen dataclass): `char_width_px: int`, `line_height_px: int`. Pixel dimensions of one fixed-width character cell.
+
+- `Page` (frozen dataclass): `chapter_id: int`, `lines: list[str]`. `chapter_id` is a 0-based index into the in-range chapter list (intended to line up with the `.book` schema's `chapters[].id` once A-8 writes it). `lines` always has exactly `lines_per_page(...)` entries — short pages are padded with empty strings.
+
+- `load_font_metrics(path: Path | str) -> FontMetrics`
+  Reads `{"char_width_px": <int>, "line_height_px": <int>}` from a JSON file. **Raises:** `FileNotFoundError` if `path` does not exist.
+
+- `chars_per_line(font_metrics: FontMetrics, display_width: int = 400) -> int`
+  `max(1, display_width // font_metrics.char_width_px)`.
+
+- `lines_per_page(font_metrics: FontMetrics, display_height: int = 240) -> int`
+  `max(1, display_height // font_metrics.line_height_px)`.
+
+- `wrap_text(text: str, max_chars: int) -> list[str]`
+  Greedy word-wrap. Collapses all whitespace (including the extracted PDF text's internal newlines) and rejoins words with single spaces. A single word longer than `max_chars` is hard-split across multiple lines rather than overflowing. Returns `[]` for blank input.
+
+- `paginate_chapters(page_texts: list[str], chapters: list[Chapter], font_metrics: FontMetrics = DEFAULT_FONT_METRICS, display_width: int = 400, display_height: int = 240, start_page: int = 0, end_page: int | None = None) -> list[Page]`
+  Core layout function. Groups chapters whose `start_page` falls in `[start_page, end_page]` (sorted by `start_page`; if none fall in range, treats the whole range as one unnamed chapter), concatenates each chapter's page texts, word-wraps to `chars_per_line(...)`, and chunks into pages of `lines_per_page(...)` lines. Before starting each chapter's text, flushes (and blank-pads) any non-empty page buffer left over from the previous chapter — this is what enforces the chapter-start-at-top rule. `end_page` defaults to `len(page_texts) - 1`.
+
+- `paginate_path(pdf_path: Path | str, font_metrics: FontMetrics = DEFAULT_FONT_METRICS, display_width: int = 400, display_height: int = 240, start_page: int | None = None, end_page: int | None = None) -> list[Page]`
+  Path-based convenience wrapper: detects chapters (`detect_chapters_path`), extracts per-page text (`extract_text_pages`), and — if `start_page`/`end_page` are omitted — auto-detects main-content bounds via `detect_content_bounds`. This is the function later tickets (A-8's `.book` writer) should call directly.
+  **Raises:** `FileNotFoundError` if `pdf_path` does not exist.
+
 ---
 
 ## Test layout
@@ -342,6 +404,30 @@ Tests cover (A-4, heuristic fallback and combined entry point):
 - `detect_chapters`/`detect_chapters_path` prefer the outline when present
 - `detect_chapters`/`detect_chapters_path` fall back to heuristic matching when there is no outline
 - `detect_chapters` accepts an open `Document` directly
+
+### `tests/test_paginate.py` *(new in A-7, 19 tests verified passing)*
+
+Unit tests for `paginate.py`, plus CLI integration via `main()`. Fixture
+PDFs are built in-test via `pymupdf.open()` + `doc.new_page()` +
+`page.insert_text()` + `doc.set_toc()`; no external PDF files required.
+
+Tests cover:
+- `chars_per_line`/`lines_per_page` arithmetic, including clamping to 1
+- `wrap_text`: basic word wrap, hard-splitting an over-long word, blank
+  input, whitespace collapsing
+- `load_font_metrics`: JSON round-trip, missing-file `FileNotFoundError`
+- `paginate_chapters`: no-chapters fallback to a single chapter, blank-line
+  padding on a short final page, chapter-start-at-top enforcement (a short
+  chapter's leftover page is flushed before the next chapter begins),
+  `start_page`/`end_page` bounds excluding out-of-range chapters, and a
+  sanity check that ~50,000 words land in the acceptance criterion's
+  ballpark (100-400 pages) under the default font metrics
+- `paginate_path`: end-to-end against a fixture PDF, missing-file
+  `FileNotFoundError`
+- CLI `--paginate` flag logs a page-count summary (both with `-o/--output`
+  and combined with `--inspect`)
+- CLI `--paginate --font-metrics <path>` uses the custom grid
+- CLI `--paginate --font-metrics <missing-path>` returns exit code `2`
 
 ### `tests/test_cover.py` *(new in A-6, 6 tests verified passing)*
 

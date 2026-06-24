@@ -25,7 +25,8 @@ from pathlib import Path
 
 from .chapters import detect_chapters_path
 from .cover import extract_cover
-from .extract import extract_text
+from .extract import extract_text, extract_text_pages
+from .paginate import DEFAULT_FONT_METRICS, FontMetrics, load_font_metrics, paginate_chapters
 from .trim import detect_content_bounds
 
 logger = logging.getLogger(__name__)
@@ -116,8 +117,79 @@ def add_subparser(
             "inclusive). Takes precedence over auto-detection."
         ),
     )
+    parser.add_argument(
+        "--paginate",
+        action="store_true",
+        help=(
+            "After chapter/bounds detection, lay out the main-content "
+            "text into 400x240 display pages and log the resulting page "
+            "count (overall and per-chapter), for manual sanity-checking. "
+            "Works with or without --inspect."
+        ),
+    )
+    parser.add_argument(
+        "--font-metrics",
+        type=Path,
+        default=None,
+        help=(
+            "Path to a JSON font metrics file "
+            '({"char_width_px": <int>, "line_height_px": <int>}) used by '
+            "--paginate to compute characters-per-line and lines-per-page. "
+            "Defaults to a placeholder 6x10px grid until the firmware's "
+            "real font (B-4) is finalized."
+        ),
+    )
     parser.set_defaults(func=run)
     return parser
+
+
+def _load_font_metrics(args: argparse.Namespace) -> FontMetrics:
+    """Resolve the font metrics to use for ``--paginate``.
+
+    Returns:
+        :data:`gbc_reader_prep.paginate.DEFAULT_FONT_METRICS` if
+        ``--font-metrics`` was not given, otherwise the metrics loaded
+        from that file.
+
+    Raises:
+        FileNotFoundError: If ``--font-metrics`` points at a missing file.
+    """
+    if args.font_metrics is None:
+        return DEFAULT_FONT_METRICS
+    return load_font_metrics(args.font_metrics)
+
+
+def _report_pagination(
+    pdf_path: Path,
+    chapters: list,
+    start_page: int,
+    end_page: int,
+    font_metrics: FontMetrics,
+) -> None:
+    """Run the pagination engine and log a summary: total page count and a
+    per-chapter breakdown. Logged at INFO level.
+    """
+    page_texts = extract_text_pages(pdf_path)
+    pages = paginate_chapters(
+        page_texts,
+        chapters,
+        font_metrics=font_metrics,
+        start_page=start_page,
+        end_page=end_page,
+    )
+
+    logger.info(
+        "Pagination: %d display page(s) for main content pages %d-%d (1-based)",
+        len(pages),
+        start_page + 1,
+        end_page + 1,
+    )
+
+    counts: dict[int, int] = {}
+    for page in pages:
+        counts[page.chapter_id] = counts.get(page.chapter_id, 0) + 1
+    for chapter_id in sorted(counts):
+        logger.info("  Chapter %d: %d page(s)", chapter_id, counts[chapter_id])
 
 
 def _report_trim(args: argparse.Namespace) -> int:
@@ -176,6 +248,18 @@ def _report_trim(args: argparse.Namespace) -> int:
         for ch in chapters:
             indent = "  " * ch.level
             logger.info("%s- %s (page %d)", indent, ch.title, ch.start_page + 1)
+
+    if args.paginate:
+        try:
+            font_metrics = _load_font_metrics(args)
+        except FileNotFoundError as exc:
+            logger.error("%s", exc)
+            return 2
+        try:
+            _report_pagination(args.pdf, chapters, start_page, end_page, font_metrics)
+        except Exception:  # noqa: BLE001
+            logger.exception("Pagination failed")
+            return 1
 
     return 0
 
@@ -242,5 +326,22 @@ def run(args: argparse.Namespace) -> int:
                 logger.info(
                     "%s- %s (page %d)", indent, ch.title, ch.start_page + 1
                 )
+
+    if args.paginate:
+        try:
+            font_metrics = _load_font_metrics(args)
+        except FileNotFoundError as exc:
+            logger.error("%s", exc)
+            return 2
+        try:
+            chapters = detect_chapters_path(args.pdf)
+            page_texts = extract_text_pages(args.pdf)
+            bounds = detect_content_bounds(chapters, len(page_texts))
+            start_page = args.start_page if args.start_page is not None else bounds.start_page
+            end_page = args.end_page if args.end_page is not None else bounds.end_page
+            _report_pagination(args.pdf, chapters, start_page, end_page, font_metrics)
+        except Exception:  # noqa: BLE001
+            logger.exception("Pagination failed")
+            return 1
 
     return 0
