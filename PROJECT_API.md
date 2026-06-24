@@ -93,6 +93,7 @@ a `.book` file (A-8). The subcommand name does not change as it evolves.
 | `--inspect` | flag | no | `False` | **(A-5)** Dry run: detect chapters and the proposed main-content page range (trimming detected back matter — Appendix/Notes/Bibliography/Index/About the Author/Acknowledg(e)ments), log a report, and exit without writing any output file. `--output` is not required with this flag. |
 | `--start-page` | `int` | no | `None` | **(A-5)** Override the auto-detected main-content start page (0-indexed). Works with or without `--inspect`. |
 | `--end-page` | `int` | no | `None` | **(A-5)** Override the auto-detected main-content end page (0-indexed, inclusive). Works with or without `--inspect`. |
+| `--extract-cover` | flag | no | `False` | **(A-6)** After extraction, render the PDF's first page as a cover image: downscale to 400x240 and apply 1-bit Floyd-Steinberg dithering. Saved as `cover.png` in the same directory as `--output`. |
 
 Exit codes: `0` success, `2` input file not found (or missing `-o/--output` when `--inspect` is absent), `1` other failure.
 
@@ -151,16 +152,19 @@ Low-level PDF text extraction using PyMuPDF. Framework-agnostic — no argparse,
   - `FileNotFoundError` if `pdf_path` does not exist
   - PyMuPDF exceptions propagate unchanged (corrupt / unsupported PDF)
 
-### `src/gbc_reader_prep/preprocess.py` *(modified in A-3)*
+### `src/gbc_reader_prep/preprocess.py` *(modified in A-6)*
 
 Handler for the `preprocess` subcommand. A-3 adds the `--show-chapters`
-flag and the chapter-listing block in `run`. Subcommand shape, exit
-codes, and error handling for the extraction step are unchanged from A-2.
+flag and the chapter-listing block in `run`. A-6 adds the
+`--extract-cover` flag. Subcommand shape, exit codes, and error handling
+for the extraction step are unchanged from A-2.
 
-**Third-party imports:** none directly (PyMuPDF used transitively via `extract` and `chapters`).
+**Third-party imports:** none directly (PyMuPDF/Pillow used transitively via `extract`, `chapters`, and `cover`).
 **Project imports:**
-- `from .chapters import detect_chapters_from_outline_path` *(new in A-3)*
+- `from .chapters import detect_chapters_path`
+- `from .cover import extract_cover` *(new in A-6)*
 - `from .extract import extract_text`
+- `from .trim import detect_content_bounds`
 
 **Module-level constants:**
 - `SUBCOMMAND: str = "preprocess"`
@@ -168,10 +172,10 @@ codes, and error handling for the extraction step are unchanged from A-2.
 **Public functions:**
 
 - `add_subparser(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser`
-  Registers the `preprocess` subcommand on a parent subparsers group. Adds positional `pdf`, required `-o/--output`, and *(A-3)* optional `--show-chapters`. Sets `func=run` via `parser.set_defaults()` so `cli.main` can dispatch.
+  Registers the `preprocess` subcommand on a parent subparsers group. Adds positional `pdf`, required `-o/--output`, optional `--show-chapters`, `--inspect`, `--start-page`/`--end-page`, and *(A-6)* `--extract-cover`. Sets `func=run` via `parser.set_defaults()` so `cli.main` can dispatch.
 
 - `run(args: argparse.Namespace) -> int`
-  Subcommand handler. Delegates to `extract_text(args.pdf, args.output)`, then if `args.show_chapters` is set, calls `detect_chapters_path(args.pdf)` *(A-4: outline, falling back to heuristic text matching)* and logs the result. Returns `0` on success, `2` on `FileNotFoundError` (from either step), `1` on any other exception (logged via `logger.exception`).
+  Subcommand handler. Delegates to `extract_text(args.pdf, args.output)`, then *(A-6)* if `args.extract_cover` is set, calls `extract_cover(args.pdf, args.output.parent)` to render and save `cover.png`, then if `args.show_chapters` is set, calls `detect_chapters_path(args.pdf)` *(A-4: outline, falling back to heuristic text matching)* and logs the result. Returns `0` on success, `2` on `FileNotFoundError` (from any step), `1` on any other exception (logged via `logger.exception`).
 
   Display convention: under `--show-chapters`, page numbers are logged
   as **1-based** (matching what PDF readers show); the `Chapter.start_page`
@@ -272,6 +276,31 @@ page count).
   detected chapter) is ignored, so the whole book is never trimmed away.
   **Raises:** `ValueError` if `page_count < 1`.
 
+### `src/gbc_reader_prep/cover.py` *(new in A-6)*
+
+Cover image extraction. Framework-agnostic — no argparse, no CLI
+concerns. Called by `preprocess.run` under `--extract-cover`.
+
+**Third-party imports:**
+- `pymupdf`
+- `PIL.Image` (Pillow)
+
+**Module-level constants:**
+- `COVER_WIDTH: int = 400`, `COVER_HEIGHT: int = 240` — target display resolution.
+- `_RENDER_ZOOM: float = 2.0` — PyMuPDF render zoom factor applied before downscaling, so the Lanczos resize + dither has real detail to work with instead of upscaled blur.
+
+**Public functions:**
+
+- `render_cover(pdf_path: Path | str) -> PIL.Image.Image`
+  Opens the PDF, renders page `0` via `page.get_pixmap(matrix=...)` at `_RENDER_ZOOM`, converts to grayscale, resizes to `(COVER_WIDTH, COVER_HEIGHT)` with `Image.LANCZOS`, then converts to mode `"1"` (Pillow's default 1-bit conversion applies Floyd-Steinberg dithering). Returns the dithered image.
+  **Raises:** `FileNotFoundError` if `pdf_path` does not exist; `ValueError` if the PDF has zero pages; PyMuPDF exceptions propagate unchanged.
+
+- `cover_to_base64(image: PIL.Image.Image) -> str`
+  Encodes the image as PNG in memory and returns a base64 ASCII string. No file I/O.
+
+- `extract_cover(pdf_path: Path | str, out_dir: Path | str) -> tuple[Path, str]`
+  Calls `render_cover`, saves the result as `out_dir / "cover.png"` (creating `out_dir` if missing), and returns `(cover_path, cover_to_base64(image))`. This is the function `preprocess.run` calls under `--extract-cover`, and the function A-8's `.book` writer should call to populate the `cover_png_base64` field.
+
 ---
 
 ## Test layout
@@ -313,6 +342,21 @@ Tests cover (A-4, heuristic fallback and combined entry point):
 - `detect_chapters`/`detect_chapters_path` prefer the outline when present
 - `detect_chapters`/`detect_chapters_path` fall back to heuristic matching when there is no outline
 - `detect_chapters` accepts an open `Document` directly
+
+### `tests/test_cover.py` *(new in A-6, 6 tests verified passing)*
+
+Unit tests for `cover.py`, plus CLI integration via `main()`. Fixture
+PDFs are built in-test via `pymupdf.open()` + `doc.new_page()` +
+`page.insert_text()`; no external PDF files are required. Imports skip
+gracefully via `pytest.importorskip` if PyMuPDF isn't installed.
+
+Tests cover:
+- `render_cover` returns a mode `"1"` image sized `400x240`
+- `render_cover` raises `FileNotFoundError` for a missing PDF
+- `cover_to_base64` round-trips to a valid PNG (magic-byte check)
+- `extract_cover` saves `cover.png` and returns matching base64
+- CLI `--extract-cover` flag saves `cover.png` alongside `--output`
+- CLI `--extract-cover` on a missing PDF returns exit code `2`
 
 ---
 
