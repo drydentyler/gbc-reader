@@ -238,7 +238,8 @@ def _write_paginate_output(path: Path, pages: list, chapters: list) -> None:
     with open(path, "w", encoding="utf-8") as out:
         for i, page in enumerate(pages):
             title = chapters[page.chapter_id].title if page.chapter_id < len(chapters) else ""
-            out.write(f"===== Page {i + 1} (chapter {page.chapter_id}: {title!r}) =====\n")
+            tag = " [TITLE PAGE]" if page.is_title_page else ""
+            out.write(f"===== Page {i + 1} (chapter {page.chapter_id}: {title!r}){tag} =====\n")
             for line in page.lines:
                 out.write(line + "\n")
             out.write("\n")

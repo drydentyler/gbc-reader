@@ -96,6 +96,7 @@ a `.book` file (A-8). The subcommand name does not change as it evolves.
 | `--extract-cover` | flag | no | `False` | **(A-6)** After extraction, render the PDF's first page as a cover image: downscale to 400x240 and apply 1-bit Floyd-Steinberg dithering. Saved as `cover.png` in the same directory as `--output`. |
 | `--paginate` | flag | no | `False` | **(A-7)** Lay out the detected main-content text into 400x240 display pages and log the resulting page count (overall and per-chapter), for manual sanity-checking. Works with or without `--inspect`; uses the same `--start-page`/`--end-page` bounds. |
 | `--font-metrics` | `pathlib.Path` | no | `None` | **(A-7)** Path to a JSON font metrics file (`{"char_width_px": <int>, "line_height_px": <int>}`) used by `--paginate` to compute characters-per-line and lines-per-page. Defaults to a placeholder 6x10px grid (`paginate.DEFAULT_FONT_METRICS`) until the firmware's real font (B-4) is finalized. |
+| `--paginate-output` | `pathlib.Path` | no | `None` | **(A-7)** Used with `--paginate`. Path to a `.txt` file to write the full laid-out page contents (one fixed-width block per display page — including chapter title pages, marked `[TITLE PAGE]` — preceded by a header naming the 1-based page number and chapter), for manual review of where page/chapter breaks and title pages actually fall. |
 
 Exit codes: `0` success, `2` input file not found (or missing `-o/--output` when `--inspect` is absent, or `--font-metrics` file not found), `1` other failure.
 
@@ -195,8 +196,11 @@ handling for the extraction step are unchanged from A-2.
 - `_load_font_metrics(args: argparse.Namespace) -> FontMetrics`
   Returns `DEFAULT_FONT_METRICS` if `args.font_metrics` is `None`, otherwise loads and returns `load_font_metrics(args.font_metrics)`. **Raises:** `FileNotFoundError` if the given path doesn't exist (caught by both call sites and mapped to exit code `2`).
 
-- `_report_pagination(pdf_path: Path, chapters: list[Chapter], start_page: int, end_page: int, font_metrics: FontMetrics) -> None`
-  Calls `extract_text_pages(pdf_path)` and `paginate_chapters(...)`, then logs (INFO level) the total page count for the given bounds and a per-chapter page-count breakdown (`Chapter <id>: <n> page(s)`, sorted by chapter id).
+- `_report_pagination(pdf_path: Path, chapters: list[Chapter], start_page: int, end_page: int, font_metrics: FontMetrics, paginate_output: Path | None = None) -> None`
+  Calls `extract_text_pages(pdf_path)` and `paginate_chapters(...)`, then logs (INFO level) the total page count for the given bounds and a per-chapter page-count breakdown (`Chapter <id>: <n> page(s)`, sorted by chapter id, counting each chapter's title page in its total). If `paginate_output` is given, also calls `_write_paginate_output(...)` to dump the full laid-out page contents and logs the output path.
+
+- `_write_paginate_output(path: Path, pages: list[Page], chapters: list[Chapter]) -> None`
+  Writes one fixed-width block per page to `path` (lines as-is, including blank padding), preceded by a header: `===== Page <n> (chapter <id>: '<title>')[ [TITLE PAGE]] =====`. The `[TITLE PAGE]` suffix is appended when `page.is_title_page` is `True`. Resolves `<title>` against the same in-range, `start_page`-sorted chapter subset (with the single-fallback-chapter rule) that `paginate_chapters` itself uses to assign `Page.chapter_id` — not the raw, unfiltered `chapters` list — so titles line up correctly even when chapters were trimmed/reordered by content bounds.
 
 - `_report_trim(args: argparse.Namespace) -> int` *(modified in A-7)*
   Unchanged `--inspect` behavior (detect chapters + content bounds, apply overrides, log report), plus: if `args.paginate` is set, resolves font metrics and calls `_report_pagination` with the same bounds used in the trim report, before returning. Still writes no output file.
@@ -342,7 +346,7 @@ top of the display.
 
 - `FontMetrics` (frozen dataclass): `char_width_px: int`, `line_height_px: int`. Pixel dimensions of one fixed-width character cell.
 
-- `Page` (frozen dataclass): `chapter_id: int`, `lines: list[str]`. `chapter_id` is a 0-based index into the in-range chapter list (intended to line up with the `.book` schema's `chapters[].id` once A-8 writes it). `lines` always has exactly `lines_per_page(...)` entries — short pages are padded with empty strings.
+- `Page` (frozen dataclass): `chapter_id: int`, `lines: list[str]`, `is_title_page: bool = False` *(`is_title_page` new in A-7 follow-up)*. `chapter_id` is a 0-based index into the in-range chapter list (intended to line up with the `.book` schema's `chapters[].id` once A-8 writes it). `lines` always has exactly `lines_per_page(...)` entries — short pages are padded with empty strings. `is_title_page` is `True` for the blank chapter-title page produced by `make_title_page` and inserted by `paginate_chapters`, `False` for body-text pages.
 
 - `load_font_metrics(path: Path | str) -> FontMetrics`
   Reads `{"char_width_px": <int>, "line_height_px": <int>}` from a JSON file. **Raises:** `FileNotFoundError` if `path` does not exist.
@@ -356,8 +360,14 @@ top of the display.
 - `wrap_text(text: str, max_chars: int) -> list[str]`
   Greedy word-wrap. Collapses all whitespace (including the extracted PDF text's internal newlines) and rejoins words with single spaces. A single word longer than `max_chars` is hard-split across multiple lines rather than overflowing. Returns `[]` for blank input.
 
+- `center_line(text: str, width: int) -> str` *(new in A-7 follow-up)*
+  Centers `text` within a line of `width` characters using spaces (left gets the smaller half of an odd-length pad). If `text` is at least as long as `width`, truncates to `width` instead of overflowing.
+
+- `make_title_page(chapter_id: int, title: str, font_metrics: FontMetrics = DEFAULT_FONT_METRICS, display_width: int = 400, display_height: int = 240) -> Page` *(new in A-7 follow-up)*
+  Builds a blank chapter title page with `title` centered both horizontally and vertically. Word-wraps `title` (via `wrap_text`) if it doesn't fit one line, clamps to `lines_per_page(...)` lines, then centers that whole block of lines vertically (splitting blank padding above/below, extra row going below on an odd split) and centers each line horizontally (via `center_line`). All other lines on the page are blank. Returns a `Page` with `is_title_page=True`.
+
 - `paginate_chapters(page_texts: list[str], chapters: list[Chapter], font_metrics: FontMetrics = DEFAULT_FONT_METRICS, display_width: int = 400, display_height: int = 240, start_page: int = 0, end_page: int | None = None) -> list[Page]`
-  Core layout function. Groups chapters whose `start_page` falls in `[start_page, end_page]` (sorted by `start_page`; if none fall in range, treats the whole range as one unnamed chapter), concatenates each chapter's page texts, word-wraps to `chars_per_line(...)`, and chunks into pages of `lines_per_page(...)` lines. Before starting each chapter's text, flushes (and blank-pads) any non-empty page buffer left over from the previous chapter — this is what enforces the chapter-start-at-top rule. `end_page` defaults to `len(page_texts) - 1`.
+  Core layout function. Groups chapters whose `start_page` falls in `[start_page, end_page]` (sorted by `start_page`; if none fall in range, treats the whole range as one unnamed chapter), concatenates each chapter's page texts, word-wraps to `chars_per_line(...)`, and chunks into pages of `lines_per_page(...)` lines. Before starting each chapter's text, flushes (and blank-pads) any non-empty page buffer left over from the previous chapter — this is what enforces the chapter-start-at-top rule. *(A-7 follow-up)* Immediately after that flush, if the chapter's title is non-blank, inserts a `make_title_page(...)` page (with that chapter's `chapter_id`) before its body text; the synthetic single-chapter fallback (blank title) gets no title page. `end_page` defaults to `len(page_texts) - 1`.
 
 - `paginate_path(pdf_path: Path | str, font_metrics: FontMetrics = DEFAULT_FONT_METRICS, display_width: int = 400, display_height: int = 240, start_page: int | None = None, end_page: int | None = None) -> list[Page]`
   Path-based convenience wrapper: detects chapters (`detect_chapters_path`), extracts per-page text (`extract_text_pages`), and — if `start_page`/`end_page` are omitted — auto-detects main-content bounds via `detect_content_bounds`. This is the function later tickets (A-8's `.book` writer) should call directly.
@@ -405,7 +415,7 @@ Tests cover (A-4, heuristic fallback and combined entry point):
 - `detect_chapters`/`detect_chapters_path` fall back to heuristic matching when there is no outline
 - `detect_chapters` accepts an open `Document` directly
 
-### `tests/test_paginate.py` *(new in A-7, 19 tests verified passing)*
+### `tests/test_paginate.py` *(new in A-7, extended in A-7 follow-up; 28 tests verified passing)*
 
 Unit tests for `paginate.py`, plus CLI integration via `main()`. Fixture
 PDFs are built in-test via `pymupdf.open()` + `doc.new_page()` +
@@ -416,18 +426,28 @@ Tests cover:
 - `wrap_text`: basic word wrap, hard-splitting an over-long word, blank
   input, whitespace collapsing
 - `load_font_metrics`: JSON round-trip, missing-file `FileNotFoundError`
-- `paginate_chapters`: no-chapters fallback to a single chapter, blank-line
-  padding on a short final page, chapter-start-at-top enforcement (a short
-  chapter's leftover page is flushed before the next chapter begins),
-  `start_page`/`end_page` bounds excluding out-of-range chapters, and a
-  sanity check that ~50,000 words land in the acceptance criterion's
-  ballpark (100-400 pages) under the default font metrics
+- `center_line`: even/odd padding split, truncation when text is too long
+- `make_title_page`: title centered both horizontally (full line width,
+  text centered within it) and vertically (single non-blank line/block
+  roughly in the middle of the page), and word-wrapping a too-long title
+  across multiple centered lines
+- `paginate_chapters`: no-chapters fallback to a single chapter (no title
+  page emitted for the blank-title fallback), blank-line padding on a
+  short final page, chapter-start-at-top enforcement (a title page plus
+  the short chapter's leftover body page are both flushed before the next
+  chapter's title page begins), `start_page`/`end_page` bounds excluding
+  out-of-range chapters (including their title pages), and a sanity check
+  that ~50,000 words land in the acceptance criterion's ballpark (100-400
+  pages) under the default font metrics
 - `paginate_path`: end-to-end against a fixture PDF, missing-file
   `FileNotFoundError`
 - CLI `--paginate` flag logs a page-count summary (both with `-o/--output`
   and combined with `--inspect`)
 - CLI `--paginate --font-metrics <path>` uses the custom grid
 - CLI `--paginate --font-metrics <missing-path>` returns exit code `2`
+- CLI `--paginate --paginate-output <path>` writes the full laid-out page
+  contents, including a `[TITLE PAGE]`-tagged header for each chapter's
+  title page (both standalone and combined with `--inspect`)
 
 ### `tests/test_cover.py` *(new in A-6, 6 tests verified passing)*
 

@@ -76,10 +76,79 @@ class Page:
             ``lines_per_page(...)`` entries; short pages are padded with
             empty strings so every page is a uniform fixed-size grid for
             the firmware to render.
+        is_title_page: ``True`` if this page is a chapter title page (see
+            :func:`make_title_page`) rather than body text.
     """
 
     chapter_id: int
     lines: list[str]
+    is_title_page: bool = False
+
+
+def center_line(text: str, width: int) -> str:
+    """Center ``text`` within a line of ``width`` characters using spaces.
+
+    If ``text`` is at least as long as ``width``, it is truncated to
+    ``width`` rather than overflowing.
+
+    Args:
+        text: Text to center.
+        width: Target line width, in characters.
+
+    Returns:
+        ``text`` padded with spaces on both sides (left gets the smaller
+        half when the padding is odd), or truncated to ``width``.
+    """
+    if len(text) >= width:
+        return text[:width]
+    total_pad = width - len(text)
+    left = total_pad // 2
+    right = total_pad - left
+    return " " * left + text + " " * right
+
+
+def make_title_page(
+    chapter_id: int,
+    title: str,
+    font_metrics: FontMetrics = DEFAULT_FONT_METRICS,
+    display_width: int = DISPLAY_WIDTH,
+    display_height: int = DISPLAY_HEIGHT,
+) -> Page:
+    """Build a blank chapter title page with ``title`` centered both
+    horizontally and vertically.
+
+    If ``title`` is longer than one line's width, it is word-wrapped into
+    multiple lines first; that whole block of lines is then centered
+    vertically as a unit. All other lines on the page are blank.
+
+    Args:
+        chapter_id: Chapter index this title page belongs to (see
+            :attr:`Page.chapter_id`).
+        title: Chapter title text to display.
+        font_metrics: Character grid to lay out against. Defaults to
+            :data:`DEFAULT_FONT_METRICS`.
+        display_width: Display width in pixels. Defaults to 400.
+        display_height: Display height in pixels. Defaults to 240.
+
+    Returns:
+        A :class:`Page` with ``is_title_page=True`` and exactly
+        ``lines_per_page(...)`` lines.
+    """
+    max_chars = chars_per_line(font_metrics, display_width)
+    max_lines = lines_per_page(font_metrics, display_height)
+
+    title_lines = wrap_text(title, max_chars) or [""]
+    title_lines = title_lines[:max_lines]
+
+    blank_above = (max_lines - len(title_lines)) // 2
+    blank_below = max_lines - len(title_lines) - blank_above
+
+    lines = (
+        [""] * blank_above
+        + [center_line(line, max_chars) for line in title_lines]
+        + [""] * blank_below
+    )
+    return Page(chapter_id=chapter_id, lines=lines, is_title_page=True)
 
 
 def load_font_metrics(path: Path | str) -> FontMetrics:
@@ -182,7 +251,12 @@ def paginate_chapters(
     The chapter-start-at-top rule is enforced by flushing (and
     blank-padding) any partially-filled page buffer before a new chapter's
     text begins, so a chapter never starts partway down a page that also
-    holds the previous chapter's tail.
+    holds the previous chapter's tail. Immediately after that flush, if
+    the chapter has a non-blank title, a title page (see
+    :func:`make_title_page`) is inserted before the chapter's body text —
+    so each named chapter's body always starts on the page *after* its
+    title page. The synthetic single-chapter fallback used when no
+    chapters are detected has a blank title and so gets no title page.
 
     Args:
         page_texts: Extracted text for every PDF page, 0-indexed (e.g. from
@@ -250,6 +324,17 @@ def paginate_chapters(
         # the previous chapter's leftover lines.
         flush_page()
         current_chapter_id = chapter_id
+
+        if chapter.title.strip():
+            pages.append(
+                make_title_page(
+                    chapter_id,
+                    chapter.title,
+                    font_metrics=font_metrics,
+                    display_width=display_width,
+                    display_height=display_height,
+                )
+            )
 
         for line in lines:
             current_lines.append(line)

@@ -1,7 +1,7 @@
 # Project Directory Tree — gbc-reader-prep
 
-> **Last updated:** GBCR-A7
-> **Annotations reflect:** changes in A-7 only. Tags from A-4 and earlier are reset to `[UNCHANGED]`; this is also the first time this document has been resynced against the A-5/A-6 source that landed since A-4 (those files now show as `[UNCHANGED]` since A-7 didn't touch them, but they exist in the tree below for the first time in this doc).
+> **Last updated:** GBCR-A7 follow-up (chapter title pages + `--paginate-output`)
+> **Annotations reflect:** changes in the A-7 follow-up (chapter title pages, the `--paginate-output` flag, and the "fits on a 400x240 display by construction" clarification) layered on top of the original A-7 delivery. Tags from A-4 and earlier are reset to `[UNCHANGED]`.
 
 ## Tree
 
@@ -61,11 +61,11 @@ gbc-reader-prep/
 - **`src/gbc_reader_prep/chapters.py`** — Framework-agnostic chapter detection (outline + heuristic fallback). Unchanged in A-7.
 - **`src/gbc_reader_prep/trim.py`** — Front/back matter trimming. Unchanged in A-7; `detect_content_bounds` is reused by `--paginate` to pick default page bounds.
 - **`src/gbc_reader_prep/cover.py`** — Cover image extraction. Unchanged in A-7.
-- **`src/gbc_reader_prep/paginate.py`** *(new in A-7)* — Pagination engine: lays out per-page extracted text into fixed-size 400x240 display pages against a `FontMetrics` character grid, enforcing the chapter-start-at-top rule. See `PROJECT_API.md` for the full symbol list.
-- **`src/gbc_reader_prep/preprocess.py`** *(modified in A-7)* — Handler for the `preprocess` subcommand. A-7 adds `--paginate` (lay out and log a page-count summary) and `--font-metrics` (override the character grid), wired into both the normal run path and `--inspect`.
+- **`src/gbc_reader_prep/paginate.py`** *(new in A-7, modified in the A-7 follow-up)* — Pagination engine: lays out per-page extracted text into fixed-size 400x240 display pages against a `FontMetrics` character grid, enforcing the chapter-start-at-top rule. Follow-up adds `center_line`/`make_title_page` and a blank, horizontally+vertically centered title page inserted ahead of each named chapter's body text in `paginate_chapters`. See `PROJECT_API.md` for the full symbol list.
+- **`src/gbc_reader_prep/preprocess.py`** *(modified in A-7, modified again in the A-7 follow-up)* — Handler for the `preprocess` subcommand. A-7 adds `--paginate` (lay out and log a page-count summary) and `--font-metrics` (override the character grid), wired into both the normal run path and `--inspect`. Follow-up adds `--paginate-output` (dump the full laid-out page contents, including chapter title pages, to a `.txt` file for manual review).
 - **`tests/__init__.py`** — Empty package marker.
-- **`tests/test_cli.py`**, **`tests/test_chapters.py`**, **`tests/test_trim.py`**, **`tests/test_cover.py`** — Unchanged in A-7.
-- **`tests/test_paginate.py`** *(new in A-7)* — Unit tests for `paginate.py` (font metrics, word-wrap, chapter-start-at-top enforcement, page-range bounds, sanity word-count check) plus CLI integration tests for `--paginate`/`--font-metrics`.
+- **`tests/test_cli.py`**, **`tests/test_chapters.py`**, **`tests/test_trim.py`**, **`tests/test_cover.py`** — Unchanged in A-7 / its follow-up.
+- **`tests/test_paginate.py`** *(new in A-7, extended in the A-7 follow-up)* — Unit tests for `paginate.py` (font metrics, word-wrap, chapter-start-at-top enforcement, page-range bounds, sanity word-count check, `center_line`/`make_title_page` centering and wrapping) plus CLI integration tests for `--paginate`/`--font-metrics`/`--paginate-output`.
 
 ## Excluded from the tree
 

@@ -14,9 +14,11 @@ from gbc_reader_prep.cli import main
 from gbc_reader_prep.paginate import (
     DEFAULT_FONT_METRICS,
     FontMetrics,
+    center_line,
     chars_per_line,
     lines_per_page,
     load_font_metrics,
+    make_title_page,
     paginate_chapters,
     paginate_path,
     wrap_text,
@@ -54,6 +56,45 @@ def test_wrap_text_empty_input():
 def test_wrap_text_collapses_whitespace():
     lines = wrap_text("line one\nline   two\n\nline three", max_chars=80)
     assert lines == ["line one line two line three"]
+
+
+def test_center_line_centers_with_even_padding():
+    assert center_line("hi", width=6) == "  hi  "
+
+
+def test_center_line_odd_padding_favors_left():
+    assert center_line("hi", width=7) == "  hi   "
+
+
+def test_center_line_truncates_when_too_long():
+    assert center_line("toolong", width=4) == "tool"
+
+
+def test_make_title_page_centers_title_horizontally_and_vertically():
+    metrics = FontMetrics(char_width_px=10, line_height_px=20)  # 40 chars/line, 12 lines/page
+    page = make_title_page(3, "Chapter 1", font_metrics=metrics)
+
+    assert page.chapter_id == 3
+    assert page.is_title_page is True
+    assert len(page.lines) == 12
+
+    non_blank = [(i, line) for i, line in enumerate(page.lines) if line.strip()]
+    assert len(non_blank) == 1
+    idx, line = non_blank[0]
+    # Vertically centered: roughly in the middle of the 12-line page.
+    assert idx in (5, 6)
+    assert line.strip() == "Chapter 1"
+    assert len(line) == 40
+
+
+def test_make_title_page_wraps_long_title_across_lines():
+    metrics = FontMetrics(char_width_px=10, line_height_px=20)  # 40 chars/line, 12 lines/page
+    long_title = "A Very Long Chapter Title That Definitely Will Not Fit On One Line"
+    page = make_title_page(0, long_title, font_metrics=metrics)
+
+    non_blank = [line for line in page.lines if line.strip()]
+    assert len(non_blank) > 1
+    assert " ".join(line.strip() for line in non_blank) == long_title
 
 
 def test_load_font_metrics_reads_json(tmp_path):
@@ -99,11 +140,14 @@ def test_paginate_chapters_enforces_chapter_start_at_top():
 
     chapter_1_pages = [p for p in pages if p.chapter_id == 0]
     chapter_2_pages = [p for p in pages if p.chapter_id == 1]
-    assert len(chapter_1_pages) == 1
-    assert len(chapter_2_pages) >= 1
-    # Chapter 2's first page must start with chapter 2's first word, not
-    # share a page with chapter 1's leftover lines.
-    assert chapter_2_pages[0].lines[0].startswith("chapter two begins here")
+    # +1 each for the title page inserted ahead of each chapter's body.
+    assert len(chapter_1_pages) == 2
+    assert len(chapter_2_pages) >= 2
+    assert chapter_1_pages[0].is_title_page
+    assert chapter_2_pages[0].is_title_page
+    # Chapter 2's first body page must start with chapter 2's first word,
+    # not share a page with chapter 1's leftover lines.
+    assert chapter_2_pages[1].lines[0].startswith("chapter two begins here")
 
 
 def test_paginate_chapters_respects_start_end_page_bounds():
@@ -119,9 +163,11 @@ def test_paginate_chapters_respects_start_end_page_bounds():
         page_texts, chapters, font_metrics=metrics, start_page=1, end_page=1
     )
 
-    assert len(pages) == 1
-    assert "keep me" in pages[0].lines[0]
-    assert "skip" not in " ".join(pages[0].lines)
+    # The in-range chapter ("Chapter 1") gets a title page ahead of its body.
+    assert len(pages) == 2
+    assert pages[0].is_title_page
+    assert "keep me" in pages[1].lines[0]
+    assert "skip" not in " ".join(pages[1].lines)
 
 
 def test_paginate_chapters_sanity_word_count():
@@ -219,7 +265,7 @@ def test_cli_paginate_output_writes_page_contents(tmp_path):
 
     assert dump.exists()
     contents = dump.read_text(encoding="utf-8")
-    assert "===== Page 1 (chapter 0: 'Chapter 1') =====" in contents
+    assert "===== Page 1 (chapter 0: 'Chapter 1') [TITLE PAGE] =====" in contents
     assert "Chapter 1 body text" in contents
 
 
