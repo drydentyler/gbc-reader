@@ -21,7 +21,8 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "pymupdf>=1.27.2.3"
+    "pymupdf>=1.27.2.3",
+    "pillow>=10.0.0"
 ]
 dynamic = ["version"]
 
