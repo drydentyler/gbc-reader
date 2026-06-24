@@ -200,6 +200,46 @@ def test_cli_paginate_with_custom_font_metrics(tmp_path, caplog):
     assert any("Pagination:" in r.message for r in caplog.records)
 
 
+def test_cli_paginate_output_writes_page_contents(tmp_path):
+    pdf = _make_pdf_with_toc(tmp_path)
+    out = tmp_path / "out" / "book.txt"
+    dump = tmp_path / "out" / "pages.txt"
+
+    assert main(
+        [
+            "preprocess",
+            str(pdf),
+            "-o",
+            str(out),
+            "--paginate",
+            "--paginate-output",
+            str(dump),
+        ]
+    ) == 0
+
+    assert dump.exists()
+    contents = dump.read_text(encoding="utf-8")
+    assert "===== Page 1 (chapter 0: 'Chapter 1') =====" in contents
+    assert "Chapter 1 body text" in contents
+
+
+def test_cli_paginate_output_with_inspect(tmp_path):
+    pdf = _make_pdf_with_toc(tmp_path)
+    dump = tmp_path / "pages.txt"
+
+    assert main(
+        [
+            "preprocess",
+            str(pdf),
+            "--inspect",
+            "--paginate",
+            "--paginate-output",
+            str(dump),
+        ]
+    ) == 0
+    assert dump.exists()
+
+
 def test_cli_paginate_missing_font_metrics_returns_two(tmp_path):
     pdf = _make_pdf_with_toc(tmp_path)
     out = tmp_path / "out" / "book.txt"

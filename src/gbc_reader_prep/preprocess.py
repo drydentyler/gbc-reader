@@ -139,6 +139,18 @@ def add_subparser(
             "real font (B-4) is finalized."
         ),
     )
+    parser.add_argument(
+        "--paginate-output",
+        type=Path,
+        default=None,
+        help=(
+            "Used with --paginate. Path to a .txt file to write the "
+            "full laid-out page contents (one block per display page, "
+            "each line padded/truncated to the character grid, with a "
+            "header marking the page number and chapter), for manual "
+            "review of where page/chapter breaks actually fall."
+        ),
+    )
     parser.set_defaults(func=run)
     return parser
 
@@ -165,9 +177,14 @@ def _report_pagination(
     start_page: int,
     end_page: int,
     font_metrics: FontMetrics,
+    paginate_output: Path | None = None,
 ) -> None:
     """Run the pagination engine and log a summary: total page count and a
     per-chapter breakdown. Logged at INFO level.
+
+    If ``paginate_output`` is given, also writes the full laid-out page
+    contents to that path for manual review (see
+    :func:`_write_paginate_output`).
     """
     page_texts = extract_text_pages(pdf_path)
     pages = paginate_chapters(
@@ -177,6 +194,19 @@ def _report_pagination(
         start_page=start_page,
         end_page=end_page,
     )
+
+    # Page.chapter_id indexes into the in-range, start_page-sorted subset
+    # of `chapters` that paginate_chapters actually laid out (see its
+    # docstring) — not `chapters` itself. Rebuild that same subset here so
+    # _write_paginate_output can look up the right title.
+    relevant_chapters = sorted(
+        (c for c in chapters if start_page <= c.start_page <= end_page),
+        key=lambda c: c.start_page,
+    )
+    if not relevant_chapters:
+        from .chapters import Chapter
+
+        relevant_chapters = [Chapter(title="", start_page=start_page, level=1)]
 
     logger.info(
         "Pagination: %d display page(s) for main content pages %d-%d (1-based)",
@@ -190,6 +220,28 @@ def _report_pagination(
         counts[page.chapter_id] = counts.get(page.chapter_id, 0) + 1
     for chapter_id in sorted(counts):
         logger.info("  Chapter %d: %d page(s)", chapter_id, counts[chapter_id])
+
+    if paginate_output is not None:
+        _write_paginate_output(paginate_output, pages, relevant_chapters)
+        logger.info("Wrote laid-out page contents to %s", paginate_output)
+
+
+def _write_paginate_output(path: Path, pages: list, chapters: list) -> None:
+    """Write the full laid-out page contents to ``path`` for manual review.
+
+    Each display page is rendered as a fixed-width block (one line per
+    grid row, so short lines/blank padding are visible exactly as they'll
+    appear on the device), preceded by a header naming the page number
+    (1-based) and the chapter it belongs to.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as out:
+        for i, page in enumerate(pages):
+            title = chapters[page.chapter_id].title if page.chapter_id < len(chapters) else ""
+            out.write(f"===== Page {i + 1} (chapter {page.chapter_id}: {title!r}) =====\n")
+            for line in page.lines:
+                out.write(line + "\n")
+            out.write("\n")
 
 
 def _report_trim(args: argparse.Namespace) -> int:
@@ -256,7 +308,9 @@ def _report_trim(args: argparse.Namespace) -> int:
             logger.error("%s", exc)
             return 2
         try:
-            _report_pagination(args.pdf, chapters, start_page, end_page, font_metrics)
+            _report_pagination(
+                args.pdf, chapters, start_page, end_page, font_metrics, args.paginate_output
+            )
         except Exception:  # noqa: BLE001
             logger.exception("Pagination failed")
             return 1
@@ -339,7 +393,9 @@ def run(args: argparse.Namespace) -> int:
             bounds = detect_content_bounds(chapters, len(page_texts))
             start_page = args.start_page if args.start_page is not None else bounds.start_page
             end_page = args.end_page if args.end_page is not None else bounds.end_page
-            _report_pagination(args.pdf, chapters, start_page, end_page, font_metrics)
+            _report_pagination(
+                args.pdf, chapters, start_page, end_page, font_metrics, args.paginate_output
+            )
         except Exception:  # noqa: BLE001
             logger.exception("Pagination failed")
             return 1
