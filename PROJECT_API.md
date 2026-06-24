@@ -1,6 +1,6 @@
 # Project API Reference — gbc-reader-prep
 
-> **Last updated:** GBCR-A7
+> **Last updated:** GBCR-A8
 > **Current version:** 0.1.0
 > **Python floor:** `>=3.11`
 > **Scope:** Desktop preprocessor subproject only. Firmware (Epic B+) is a separate codebase and not yet underway.
@@ -81,14 +81,18 @@ When no subcommand is given, prints help and exits 0.
 
 ### `gbc-reader-prep preprocess`
 
-Preprocess a PDF into reader-ready output. Currently writes a plain
-`.txt` extraction (A-2 behaviour); later tickets evolve the output into
-a `.book` file (A-8). The subcommand name does not change as it evolves.
+Preprocess a PDF into reader-ready output. **(A-8)** If `--output`'s
+suffix is `.book`, writes a full `.book` JSON manifest (schema version,
+title/author, display info, base64 cover, chapters, and paginated
+pages) via `book.write_book_path`. For any other `--output` suffix,
+falls back to the original plain `.txt` extraction (A-2 behaviour) with
+the `--show-chapters`/`--extract-cover`/`--paginate` diagnostic flags.
+The subcommand name does not change as it evolves.
 
 | Argument | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `pdf` (positional) | `pathlib.Path` | yes | — | Path to the input PDF |
-| `-o`, `--output` | `pathlib.Path` | no (required unless `--inspect`) | — | Path to the output file (`.txt` during A-2 / A-3) |
+| `-o`, `--output` | `pathlib.Path` | no (required unless `--inspect`) | — | Path to the output file. **(A-8)** A `.book`-suffixed path writes a full `.book` JSON manifest; any other suffix writes a plain `.txt` extraction (A-2 behaviour). |
 | `--show-chapters` | flag | no | `False` | **(A-3, extended A-4)** After extraction, log the chapter list derived from the PDF's outline, falling back to heuristic text matching (`Chapter \d+`, `Prologue`, `Epilogue`, `Introduction`) if the PDF has no outline. Logged at INFO level. |
 | `--inspect` | flag | no | `False` | **(A-5)** Dry run: detect chapters and the proposed main-content page range (trimming detected back matter — Appendix/Notes/Bibliography/Index/About the Author/Acknowledg(e)ments), log a report, and exit without writing any output file. `--output` is not required with this flag. |
 | `--start-page` | `int` | no | `None` | **(A-5)** Override the auto-detected main-content start page (0-indexed). Works with or without `--inspect`. |
@@ -159,21 +163,25 @@ Low-level PDF text extraction using PyMuPDF. Framework-agnostic — no argparse,
   In-memory counterpart to `extract_text`: opens the PDF and returns a list of per-page text (0-indexed, document order), with no file I/O and no page separator. Used by `paginate.paginate_path` so the pagination engine doesn't have to re-parse a form-feed-delimited `.txt` file.
   **Raises:** `FileNotFoundError` if `pdf_path` does not exist.
 
-### `src/gbc_reader_prep/preprocess.py` *(modified in A-7)*
+### `src/gbc_reader_prep/preprocess.py` *(modified in A-8)*
 
 Handler for the `preprocess` subcommand. A-3 adds the `--show-chapters`
 flag and the chapter-listing block in `run`. A-6 adds the
 `--extract-cover` flag. A-7 adds `--paginate` and `--font-metrics`,
 wired into both `run` (the normal extraction path) and `_report_trim`
-(the `--inspect` dry-run path). Subcommand shape, exit codes, and error
-handling for the extraction step are unchanged from A-2.
+(the `--inspect` dry-run path). **A-8** adds `_write_book`: when
+`run` sees `--output`'s suffix is `.book`, it dispatches there instead
+of the `.txt`-extraction path below it. Subcommand shape, exit codes,
+and error handling for the (non-`.book`) extraction step are unchanged
+from A-2.
 
-**Third-party imports:** none directly (PyMuPDF/Pillow used transitively via `extract`, `chapters`, `cover`, and `paginate`).
+**Third-party imports:** none directly (PyMuPDF/Pillow used transitively via `extract`, `chapters`, `cover`, `paginate`, and `book`).
 **Project imports:**
+- `from .book import write_book_path` *(new in A-8)*
 - `from .chapters import detect_chapters_path`
 - `from .cover import extract_cover`
-- `from .extract import extract_text, extract_text_pages` *(`extract_text_pages` new in A-7)*
-- `from .paginate import DEFAULT_FONT_METRICS, FontMetrics, load_font_metrics, paginate_chapters` *(new in A-7)*
+- `from .extract import extract_text, extract_text_pages`
+- `from .paginate import DEFAULT_FONT_METRICS, FontMetrics, load_font_metrics, paginate_chapters`
 - `from .trim import detect_content_bounds`
 
 **Module-level constants:**
@@ -185,7 +193,7 @@ handling for the extraction step are unchanged from A-2.
   Registers the `preprocess` subcommand on a parent subparsers group. Adds positional `pdf`, required `-o/--output`, optional `--show-chapters`, `--inspect`, `--start-page`/`--end-page`, `--extract-cover`, and *(A-7)* `--paginate`/`--font-metrics`. Sets `func=run` via `parser.set_defaults()` so `cli.main` can dispatch.
 
 - `run(args: argparse.Namespace) -> int`
-  Subcommand handler. Delegates to `extract_text(args.pdf, args.output)`, then if `args.extract_cover` is set, calls `extract_cover(args.pdf, args.output.parent)` to render and save `cover.png`, then if `args.show_chapters` is set, calls `detect_chapters_path(args.pdf)` (outline, falling back to heuristic text matching) and logs the result, then *(A-7)* if `args.paginate` is set, resolves font metrics (`_load_font_metrics`), detects chapters and content bounds, and calls `_report_pagination` to log a page-count summary. Returns `0` on success, `2` on `FileNotFoundError` (from any step, including a missing `--font-metrics` file), `1` on any other exception (logged via `logger.exception`).
+  Subcommand handler. *(A-8)* If `args.inspect` is falsy and `args.output.suffix.lower() == ".book"`, returns `_write_book(args)` immediately — none of the steps below run in that case. Otherwise: delegates to `extract_text(args.pdf, args.output)`, then if `args.extract_cover` is set, calls `extract_cover(args.pdf, args.output.parent)` to render and save `cover.png`, then if `args.show_chapters` is set, calls `detect_chapters_path(args.pdf)` (outline, falling back to heuristic text matching) and logs the result, then if `args.paginate` is set, resolves font metrics (`_load_font_metrics`), detects chapters and content bounds, and calls `_report_pagination` to log a page-count summary. Returns `0` on success, `2` on `FileNotFoundError` (from any step, including a missing `--font-metrics` file), `1` on any other exception (logged via `logger.exception`).
 
   Display convention: under `--show-chapters`, page numbers are logged
   as **1-based** (matching what PDF readers show); the `Chapter.start_page`
@@ -201,6 +209,9 @@ handling for the extraction step are unchanged from A-2.
 
 - `_write_paginate_output(path: Path, pages: list[Page], chapters: list[Chapter]) -> None`
   Writes one fixed-width block per page to `path` (lines as-is, including blank padding), preceded by a header: `===== Page <n> (chapter <id>: '<title>')[ [TITLE PAGE]] =====`. The `[TITLE PAGE]` suffix is appended when `page.is_title_page` is `True`. Resolves `<title>` against the same in-range, `start_page`-sorted chapter subset (with the single-fallback-chapter rule) that `paginate_chapters` itself uses to assign `Page.chapter_id` — not the raw, unfiltered `chapters` list — so titles line up correctly even when chapters were trimmed/reordered by content bounds.
+
+- `_write_book(args: argparse.Namespace) -> int` *(new in A-8)*
+  Implements the `.book`-output path: resolves font metrics (`_load_font_metrics`), then calls `write_book_path(args.pdf, args.output, font_metrics=..., start_page=args.start_page, end_page=args.end_page)` and logs a one-line summary (total pages, chapter count). Returns `2` on `FileNotFoundError` (missing PDF or missing `--font-metrics` file), `1` on any other exception (logged via `logger.exception`), `0` on success.
 
 - `_report_trim(args: argparse.Namespace) -> int` *(modified in A-7)*
   Unchanged `--inspect` behavior (detect chapters + content bounds, apply overrides, log report), plus: if `args.paginate` is set, resolves font metrics and calls `_report_pagination` with the same bounds used in the trim report, before returning. Still writes no output file.
@@ -376,6 +387,58 @@ top of the display.
   Path-based convenience wrapper: detects chapters (`detect_chapters_path`), extracts per-page text (`extract_text_pages`), and — if `start_page`/`end_page` are omitted — auto-detects main-content bounds via `detect_content_bounds`. This is the function later tickets (A-8's `.book` writer) should call directly.
   **Raises:** `FileNotFoundError` if `pdf_path` does not exist.
 
+### `src/gbc_reader_prep/book.py` *(new in A-8)*
+
+`.book` file writer. Framework-agnostic — no argparse, no CLI concerns.
+Called by `preprocess.run`/`_write_book` when `--output` ends in
+`.book`. Assembles the manifest schema from the project plan (§3.1) by
+composing the chapter detection (A-3/A-4), trimming (A-5), cover (A-6),
+and pagination (A-7) modules.
+
+**Third-party imports:**
+- `pymupdf` (lazily, inside `_read_metadata`, to read PDF title/author metadata)
+
+**Project imports:**
+- `from .chapters import Chapter, detect_chapters_path`
+- `from .cover import cover_to_base64, render_cover`
+- `from .extract import extract_text_pages`
+- `from .paginate import DEFAULT_FONT_METRICS, DISPLAY_HEIGHT, DISPLAY_WIDTH, FontMetrics, Page, paginate_chapters`
+- `from .trim import detect_content_bounds`
+
+**Module-level constants:**
+- `SCHEMA_VERSION: int = 1` — value written to the manifest's `schema_version` field.
+
+**Private helpers:**
+
+- `_relevant_chapters(chapters: list[Chapter], start_page: int, end_page: int) -> list[Chapter]`
+  Returns the same in-range, `start_page`-sorted chapter subset (with the same single blank-title fallback when none fall in range) that `paginate_chapters` lays out internally. `Page.chapter_id` indexes into this exact list, so `build_book` uses it to build the manifest's `chapters` array with ids that line up with `pages[].chapter_id`. Duplicates the subset-selection logic in `preprocess._report_pagination`/`_write_paginate_output` rather than importing it, since those are CLI-reporting private helpers.
+
+- `_read_metadata(pdf_path: Path) -> tuple[str, str]`
+  Opens the PDF, reads `doc.metadata` for `title`/`author`. Falls back to the PDF's filename stem for `title` (and `""` for `author`) if metadata is missing or blank.
+
+**Public functions:**
+
+- `build_book(pdf_path: Path | str, *, title: str | None = None, author: str | None = None, font_metrics: FontMetrics = DEFAULT_FONT_METRICS, display_width: int = DISPLAY_WIDTH, display_height: int = DISPLAY_HEIGHT, start_page: int | None = None, end_page: int | None = None, include_cover: bool = True) -> dict[str, Any]`
+  Assembles and returns the full `.book` manifest dict (no file I/O):
+  ```json
+  {
+    "schema_version": 1,
+    "title": "...",
+    "author": "...",
+    "display": {"width_px": 400, "height_px": 240, "font": "<char_width_px>x<line_height_px>"},
+    "cover_png_base64": "..." | null,
+    "chapters": [{"id": 0, "title": "...", "start_page": 0}, ...],
+    "pages": [{"chapter_id": 0, "lines": ["...", ...]}, ...],
+    "total_pages": <int>
+  }
+  ```
+  `title`/`author` default to PDF metadata (`_read_metadata`) if not given explicitly. `start_page`/`end_page` default to `trim.detect_content_bounds`'s proposed bounds if not given (same pattern as `paginate.paginate_path`). Pagination delegates to `paginate_chapters`; chapters to `detect_chapters_path` filtered via `_relevant_chapters`. If `include_cover` is `True` (default), renders the cover via `render_cover`/`cover_to_base64` directly — **not** `cover.extract_cover` — so no `cover.png` file is written as a side effect next to the source PDF; `cover_png_base64` is `None` when `include_cover=False`.
+  **Raises:** `FileNotFoundError` if `pdf_path` does not exist.
+
+- `write_book_path(pdf_path: Path | str, out_path: Path | str, **build_kwargs: Any) -> dict[str, Any]`
+  Calls `build_book(pdf_path, **build_kwargs)`, creates `out_path`'s parent directories if missing, writes the manifest as JSON (UTF-8, no extra formatting) to `out_path` (overwriting any existing file), logs an INFO summary (page/chapter counts), and returns the manifest dict that was written. This is the function `preprocess._write_book` calls.
+  **Raises:** `FileNotFoundError` if `pdf_path` does not exist.
+
 ---
 
 ## Test layout
@@ -475,6 +538,28 @@ Tests cover:
 - `extract_cover` saves `cover.png` and returns matching base64
 - CLI `--extract-cover` flag saves `cover.png` alongside `--output`
 - CLI `--extract-cover` on a missing PDF returns exit code `2`
+
+### `tests/test_book.py` *(new in A-8)*
+
+Unit tests for `book.py`, plus CLI integration via `main()`. Fixture
+PDFs are built in-test via `pymupdf.open()` + `doc.new_page()` +
+`page.insert_text()` + `doc.set_toc()`/`doc.set_metadata()`; no external
+PDF files required. Imports skip gracefully via `pytest.importorskip`
+if PyMuPDF isn't installed.
+
+Tests cover:
+- `build_book` returns all expected schema fields (`schema_version`, `display`, `total_pages`, etc.)
+- `title`/`author` default to PDF metadata; `title` falls back to the filename stem when metadata is blank
+- `chapters` entries match detected chapters with correct `id`/`start_page`
+- every `pages[].chapter_id` references a valid `chapters[].id`
+- `cover_png_base64` round-trips to a valid PNG; `include_cover=False` sets it to `None`
+- `start_page`/`end_page` overrides narrow the chapter/page set
+- `build_book` raises `FileNotFoundError` for a missing PDF
+- `write_book_path` writes valid JSON matching the in-memory manifest
+- CLI `preprocess -o *.book` writes a `.book` file with the expected fields
+- CLI `.book` output on a missing PDF returns exit code `2`
+- CLI `.book` output respects `--start-page`/`--end-page` overrides
+- CLI `.book` output with a missing `--font-metrics` file returns exit code `2` and writes no output file
 
 ---
 

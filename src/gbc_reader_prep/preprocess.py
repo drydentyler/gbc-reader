@@ -23,6 +23,7 @@ import argparse
 import logging
 from pathlib import Path
 
+from .book import write_book_path
 from .chapters import detect_chapters_path
 from .cover import extract_cover
 from .extract import extract_text, extract_text_pages
@@ -319,6 +320,49 @@ def _report_trim(args: argparse.Namespace) -> int:
     return 0
 
 
+def _write_book(args: argparse.Namespace) -> int:
+    """A-8: assemble and write a full ``.book`` JSON file.
+
+    Triggered when ``--output`` ends in ``.book``, in place of the plain
+    ``.txt`` extraction path. Chapters, content bounds, pagination, and
+    the cover image are all (re-)derived here regardless of
+    ``--show-chapters``/``--extract-cover``/``--paginate``, since a
+    ``.book`` file always needs all four.
+
+    Returns:
+        0 on success, 2 if the input PDF (or ``--font-metrics`` file)
+        does not exist, 1 on any other failure.
+    """
+    try:
+        font_metrics = _load_font_metrics(args)
+    except FileNotFoundError as exc:
+        logger.error("%s", exc)
+        return 2
+
+    try:
+        book = write_book_path(
+            args.pdf,
+            args.output,
+            font_metrics=font_metrics,
+            start_page=args.start_page,
+            end_page=args.end_page,
+        )
+    except FileNotFoundError as exc:
+        logger.error("%s", exc)
+        return 2
+    except Exception:  # noqa: BLE001
+        logger.exception("Writing .book file failed")
+        return 1
+
+    logger.info(
+        "Wrote %s: %d page(s), %d chapter(s)",
+        args.output,
+        book["total_pages"],
+        len(book["chapters"]),
+    )
+    return 0
+
+
 def run(args: argparse.Namespace) -> int:
     """Execute the ``preprocess`` subcommand.
 
@@ -332,6 +376,9 @@ def run(args: argparse.Namespace) -> int:
     if args.output is None:
         logger.error("-o/--output is required unless --inspect is given")
         return 2
+
+    if args.output.suffix.lower() == ".book":
+        return _write_book(args)
 
     try:
         page_count = extract_text(args.pdf, args.output)
