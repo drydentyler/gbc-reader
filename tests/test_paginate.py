@@ -21,6 +21,7 @@ from gbc_reader_prep.paginate import (
     make_title_page,
     paginate_chapters,
     paginate_path,
+    strip_chapter_heading,
     wrap_text,
 )
 
@@ -97,6 +98,28 @@ def test_make_title_page_wraps_long_title_across_lines():
     assert " ".join(line.strip() for line in non_blank) == long_title
 
 
+def test_strip_chapter_heading_strips_chapter_number_and_title():
+    text = "Chapter 1 Humanity's Special Power Imagination is what sets us apart."
+    result = strip_chapter_heading(text, "Humanity's Special Power")
+    assert result == "Imagination is what sets us apart."
+
+
+def test_strip_chapter_heading_strips_part_and_title_with_trailing_junk():
+    text = "PART I NONHUMAN MINDS OceanofPDF.com Some real body text follows."
+    result = strip_chapter_heading(text, "Nonhuman Minds")
+    assert result == "OceanofPDF.com Some real body text follows."
+
+
+def test_strip_chapter_heading_no_match_leaves_text_unchanged_but_collapsed():
+    text = "  some   unrelated   body text  "
+    assert strip_chapter_heading(text, "Chapter 1") == "some unrelated body text"
+
+
+def test_strip_chapter_heading_blank_title_only_strips_known_prefixes():
+    text = "Chapter 1 some body text"
+    assert strip_chapter_heading(text, "") == "some body text"
+
+
 def test_load_font_metrics_reads_json(tmp_path):
     path = tmp_path / "font.json"
     path.write_text(json.dumps({"char_width_px": 8, "line_height_px": 16}))
@@ -148,6 +171,24 @@ def test_paginate_chapters_enforces_chapter_start_at_top():
     # Chapter 2's first body page must start with chapter 2's first word,
     # not share a page with chapter 1's leftover lines.
     assert chapter_2_pages[1].lines[0].startswith("chapter two begins here")
+
+
+def test_paginate_chapters_does_not_duplicate_heading_in_body():
+    metrics = FontMetrics(char_width_px=10, line_height_px=20)  # 40 chars/line, 12 lines/page
+    chapters = [Chapter(title="Humanity's Special Power", start_page=0, level=1)]
+    page_texts = [
+        "Chapter 1 Humanity's Special Power Imagination is what sets us apart from other animals."
+    ]
+
+    pages = paginate_chapters(page_texts, chapters, font_metrics=metrics)
+
+    title_pages = [p for p in pages if p.is_title_page]
+    body_pages = [p for p in pages if not p.is_title_page]
+    assert len(title_pages) == 1
+    assert body_pages[0].lines[0].startswith("Imagination is what sets us apart")
+    body_text = " ".join(line for p in body_pages for line in p.lines)
+    assert "Chapter 1" not in body_text
+    assert "Humanity's Special Power" not in body_text
 
 
 def test_paginate_chapters_respects_start_end_page_bounds():

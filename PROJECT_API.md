@@ -366,8 +366,11 @@ top of the display.
 - `make_title_page(chapter_id: int, title: str, font_metrics: FontMetrics = DEFAULT_FONT_METRICS, display_width: int = 400, display_height: int = 240) -> Page` *(new in A-7 follow-up)*
   Builds a blank chapter title page with `title` centered both horizontally and vertically. Word-wraps `title` (via `wrap_text`) if it doesn't fit one line, clamps to `lines_per_page(...)` lines, then centers that whole block of lines vertically (splitting blank padding above/below, extra row going below on an odd split) and centers each line horizontally (via `center_line`). All other lines on the page are blank. Returns a `Page` with `is_title_page=True`.
 
+- `strip_chapter_heading(text: str, title: str) -> str` *(new in A-7 follow-up)*
+  Collapses `text`'s whitespace to single spaces, then repeatedly strips, from the start, any combination (in either order) of a known heading-prefix pattern (`Chapter N`, `Part N`/roman numeral, `Section N`, `Prologue`, `Epilogue`, `Introduction`; case-insensitive) and/or a literal restatement of `title` (case-insensitive), until neither matches any more. Used so a chapter's body text doesn't visibly repeat the heading already shown on its `make_title_page` title page. No-op (aside from whitespace collapsing) if no heading match is found at the start.
+
 - `paginate_chapters(page_texts: list[str], chapters: list[Chapter], font_metrics: FontMetrics = DEFAULT_FONT_METRICS, display_width: int = 400, display_height: int = 240, start_page: int = 0, end_page: int | None = None) -> list[Page]`
-  Core layout function. Groups chapters whose `start_page` falls in `[start_page, end_page]` (sorted by `start_page`; if none fall in range, treats the whole range as one unnamed chapter), concatenates each chapter's page texts, word-wraps to `chars_per_line(...)`, and chunks into pages of `lines_per_page(...)` lines. Before starting each chapter's text, flushes (and blank-pads) any non-empty page buffer left over from the previous chapter — this is what enforces the chapter-start-at-top rule. *(A-7 follow-up)* Immediately after that flush, if the chapter's title is non-blank, inserts a `make_title_page(...)` page (with that chapter's `chapter_id`) before its body text; the synthetic single-chapter fallback (blank title) gets no title page. `end_page` defaults to `len(page_texts) - 1`.
+  Core layout function. Groups chapters whose `start_page` falls in `[start_page, end_page]` (sorted by `start_page`; if none fall in range, treats the whole range as one unnamed chapter), concatenates each chapter's page texts, *(A-7 follow-up)* strips a leading heading restatement via `strip_chapter_heading(...)` when the chapter has a non-blank title, word-wraps to `chars_per_line(...)`, and chunks into pages of `lines_per_page(...)` lines. Before starting each chapter's text, flushes (and blank-pads) any non-empty page buffer left over from the previous chapter — this is what enforces the chapter-start-at-top rule. *(A-7 follow-up)* Immediately after that flush, if the chapter's title is non-blank, inserts a `make_title_page(...)` page (with that chapter's `chapter_id`) before its body text; the synthetic single-chapter fallback (blank title) gets no title page (and no heading-stripping). `end_page` defaults to `len(page_texts) - 1`.
 
 - `paginate_path(pdf_path: Path | str, font_metrics: FontMetrics = DEFAULT_FONT_METRICS, display_width: int = 400, display_height: int = 240, start_page: int | None = None, end_page: int | None = None) -> list[Page]`
   Path-based convenience wrapper: detects chapters (`detect_chapters_path`), extracts per-page text (`extract_text_pages`), and — if `start_page`/`end_page` are omitted — auto-detects main-content bounds via `detect_content_bounds`. This is the function later tickets (A-8's `.book` writer) should call directly.
@@ -415,7 +418,7 @@ Tests cover (A-4, heuristic fallback and combined entry point):
 - `detect_chapters`/`detect_chapters_path` fall back to heuristic matching when there is no outline
 - `detect_chapters` accepts an open `Document` directly
 
-### `tests/test_paginate.py` *(new in A-7, extended in A-7 follow-up; 28 tests verified passing)*
+### `tests/test_paginate.py` *(new in A-7, extended in A-7 follow-up; 33 tests verified passing)*
 
 Unit tests for `paginate.py`, plus CLI integration via `main()`. Fixture
 PDFs are built in-test via `pymupdf.open()` + `doc.new_page()` +
@@ -431,14 +434,20 @@ Tests cover:
   text centered within it) and vertically (single non-blank line/block
   roughly in the middle of the page), and word-wrapping a too-long title
   across multiple centered lines
+- `strip_chapter_heading`: stripping a `Chapter N <title>` restatement,
+  stripping a `Part N <title>` restatement with trailing junk text
+  preserved after it, leaving unrelated text unchanged (aside from
+  whitespace collapsing), and stripping a known prefix pattern even with
+  a blank title
 - `paginate_chapters`: no-chapters fallback to a single chapter (no title
   page emitted for the blank-title fallback), blank-line padding on a
   short final page, chapter-start-at-top enforcement (a title page plus
   the short chapter's leftover body page are both flushed before the next
-  chapter's title page begins), `start_page`/`end_page` bounds excluding
-  out-of-range chapters (including their title pages), and a sanity check
-  that ~50,000 words land in the acceptance criterion's ballpark (100-400
-  pages) under the default font metrics
+  chapter's title page begins), a chapter's body text not repeating its
+  own heading (already shown on its title page), `start_page`/`end_page`
+  bounds excluding out-of-range chapters (including their title pages),
+  and a sanity check that ~50,000 words land in the acceptance criterion's
+  ballpark (100-400 pages) under the default font metrics
 - `paginate_path`: end-to-end against a fixture PDF, missing-file
   `FileNotFoundError`
 - CLI `--paginate` flag logs a page-count summary (both with `-o/--output`

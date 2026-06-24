@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -231,6 +232,57 @@ def wrap_text(text: str, max_chars: int) -> list[str]:
     return lines
 
 
+_HEADING_PREFIX_PATTERNS = [
+    re.compile(r"^chapter\s+\d+\b", re.IGNORECASE),
+    re.compile(r"^part\s+(?:[ivxlcdm]+|\d+)\b", re.IGNORECASE),
+    re.compile(r"^section\s+\d+\b", re.IGNORECASE),
+    re.compile(r"^prologue\b", re.IGNORECASE),
+    re.compile(r"^epilogue\b", re.IGNORECASE),
+    re.compile(r"^introduction\b", re.IGNORECASE),
+]
+
+
+def strip_chapter_heading(text: str, title: str) -> str:
+    """Strip a leading chapter-heading restatement from ``text``.
+
+    The extracted page text for a chapter's first page typically still
+    contains that chapter's own heading (e.g. ``"Chapter 1 Some Title"``
+    or ``"Part I Some Title"``) — now redundant since :func:`make_title_page`
+    already displays it on its own dedicated title page. This repeatedly
+    strips, from the start of ``text``, any combination of a known
+    heading-prefix pattern (``Chapter N``, ``Part N``/roman numeral,
+    ``Section N``, ``Prologue``, ``Epilogue``, ``Introduction``) and/or a
+    literal restatement of ``title``, in either order, until neither
+    matches any more.
+
+    Args:
+        text: Whitespace-arbitrary chapter body text (e.g. from joining
+            several PDF pages' extracted text).
+        title: The chapter's title, as detected (see :class:`Chapter`).
+
+    Returns:
+        ``text`` with whitespace collapsed to single spaces and any
+        leading heading restatement removed. Unchanged (aside from
+        whitespace collapsing) if no heading match is found at the start.
+    """
+    collapsed = " ".join(text.split())
+    title_norm = " ".join(title.split())
+
+    changed = True
+    while changed:
+        changed = False
+        for pattern in _HEADING_PREFIX_PATTERNS:
+            match = pattern.match(collapsed)
+            if match:
+                collapsed = collapsed[match.end() :].lstrip(" :.-")
+                changed = True
+        if title_norm and collapsed.lower().startswith(title_norm.lower()):
+            collapsed = collapsed[len(title_norm) :].lstrip(" :.-")
+            changed = True
+
+    return collapsed
+
+
 def paginate_chapters(
     page_texts: list[str],
     chapters: list[Chapter],
@@ -257,6 +309,10 @@ def paginate_chapters(
     so each named chapter's body always starts on the page *after* its
     title page. The synthetic single-chapter fallback used when no
     chapters are detected has a blank title and so gets no title page.
+    For the same reason, a chapter's text has any leading restatement of
+    its own heading (e.g. "Chapter 1 Some Title", already shown on the
+    title page) stripped via :func:`strip_chapter_heading` before
+    word-wrapping, so it isn't shown twice.
 
     Args:
         page_texts: Extracted text for every PDF page, 0-indexed (e.g. from
@@ -316,6 +372,8 @@ def paginate_chapters(
             continue
 
         text = " ".join(page_texts[p] for p in range(chap_start, chap_end + 1))
+        if chapter.title.strip():
+            text = strip_chapter_heading(text, chapter.title)
         lines = wrap_text(text, max_chars)
         if not lines:
             continue
